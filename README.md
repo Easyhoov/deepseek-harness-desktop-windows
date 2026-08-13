@@ -24,7 +24,7 @@ Most community wrappers spawn the `dsh web` CLI and point a browser window at `1
 | 🛡️ **Crash recovery** | Renderer crash rebuilds the window and reloads the site; the host state survives (3 strikes per minute → give up) |
 | 📡 **Chunked IPC responses** | Headers first, body as chunk frames with a ready handshake (no frame loss); unary responses stay on the fast inline path |
 | 📦 **Session export** | Runs in-process with taskbar progress, native save dialog, and a completion notification |
-| ⬆️ **Auto-update ready** | `electron-updater` wired (generic provider — set `build.publish.url`); background check 15 s after boot + tray gesture |
+| ⬆️ **Auto-update** | `electron-updater` against GitHub Releases (`publish.url` → `/releases/latest/download`): background check 15 s after boot + tray gesture; `latest.yml` ships with every Release so installed builds update themselves |
 | 🐋 **Official whale icon** | The DeepSeek Harness favicon (black whale) rasterized to PNG via `scripts/rasterize.mjs` |
 | 🧰 **Log repair tool** | `scripts/repair-log.mjs` fixes the upstream interruption-flush seq-reorder corruption (see below) |
 
@@ -32,10 +32,11 @@ Most community wrappers spawn the `dsh web` CLI and point a browser window at `1
 
 | Artifact | Notes |
 |---|---|
-| `DeepSeek Harness Desktop Setup 0.1.0.exe` | NSIS installer (choose install dir) |
-| `DeepSeek Harness Desktop 0.1.0.exe` | Portable |
+| `DeepSeek-Harness-Desktop-Setup-<version>.exe` | NSIS installer (choose install dir); used by the auto-updater |
+| `DeepSeek-Harness-Desktop-Portable-<version>.exe` | Portable |
+| `latest.yml` | Auto-update metadata, published beside the installers on every Release |
 
-Both are built from this repo (`npm run dist`). **They are not code-signed** — SmartScreen will ask; signing is wired via `CSC_LINK` / `CSC_KEY_PASSWORD`.
+Get the latest builds from [Releases](https://github.com/Easyhoov/deepseek-harness-desktop/releases) — built by GitHub Actions on every `v*` tag push. **Not code-signed** — SmartScreen will ask; signing is wired via `CSC_LINK` / `CSC_KEY_PASSWORD`.
 
 ## Quick start
 
@@ -63,10 +64,21 @@ This mirrors the official [Quickstart](https://deepseek-harness.github.io/deepse
 npm install
 npm start          # dev run (unpackaged)
 npm run dist:dir   # unpacked build into release/win-unpacked
-npm run dist       # portable + NSIS installers
+npm run dist       # portable + NSIS installers (also writes latest.yml)
 ```
 
-Node ≥ 22 and a Windows box for the packaged targets. Packaging notes worth keeping (all four were real bugs fixed here):
+Node ≥ 22 and a Windows box for the packaged targets.
+
+### Releasing
+
+```sh
+npm version patch    # or minor / major — bumps package.json, commits, tags
+git push --follow-tags origin main
+```
+
+The `release` workflow (`.github/workflows/release.yml`) runs on every `v*` tag: it verifies the tag matches `package.json`'s version, builds on `windows-latest`, and attaches the NSIS installer, portable build, blockmap, and `latest.yml` to a GitHub Release. Installed copies then auto-update from `/releases/latest/download` — no separate update server. Unreleased local builds stay quiet (the updater is inert unless packaged).
+
+### Packaging notes (real bugs fixed here)
 
 - `npmRebuild: false` — Electron ABI rebuilds try to compile `node-pty` from source (VS Spectre libs); the web profile never uses terminal rows. koffi / sharp / `node-addon-require-builtin` ship N-API prebuilds and load fine.
 - `asarUnpack: node_modules/**` — the healed `profiles/node_modules` junctions must point at real directories; ESM resolution cannot cross a junction into an asar archive. `boot.mjs` / `site.mjs` rewrite `app.asar\` paths to `app.asar.unpacked\`.
@@ -110,7 +122,7 @@ The transport seam is upstream's own design: `toFetchHandler(apiProxy)` wraps th
 ## Known limitations / roadmap
 
 - Response streaming is chunked but unbuffered for long-lived bodies only; unary responses buffer whole (fine for the current API).
-- No code-signing certificate; updater points at a placeholder URL (`build.publish`).
+- No code-signing certificate (SmartScreen warns; `CSC_LINK` / `CSC_KEY_PASSWORD` in CI enable signing).
 - Windows-only packaging for now (main-process code is cross-platform; macOS/Linux configs are the next step).
 - **Planned:** launch-directory workspace preselection (`dsh-desktop.exe <dir>` / context-menu open), dependency slimming (drop TUI/terminal packages → ~60 MB installers), multi-window sessions, CSP injection.
 
@@ -138,7 +150,7 @@ MIT. The packaged `@deepseek-ai/dsh` distribution and the whale favicon are © D
 2. 设置 → 模型，填入 DeepSeek API 密钥（立即生效）。
 3. 选择工作区，开聊。
 
-安装包：`DeepSeek Harness Desktop Setup 0.1.0.exe`（NSIS）/ 便携版。**未做代码签名**（SmartScreen 会提示）；签名与更新服务器分别通过 `CSC_LINK`/`CSC_KEY_PASSWORD` 与 `build.publish.url` 接入。
+安装包：`DeepSeek-Harness-Desktop-Setup-<版本>.exe`（NSIS）/ 便携版，从 [Releases](https://github.com/Easyhoov/deepseek-harness-desktop/releases) 获取（`v*` tag 推送后由 GitHub Actions 自动构建并附带 `latest.yml`，已装版本自动更新）。**未做代码签名**（SmartScreen 会提示）；签名通过 CI 的 `CSC_LINK`/`CSC_KEY_PASSWORD` 接入。
 
 ## 环境变量
 

@@ -43,12 +43,16 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "shortcutName": "DeepSeek Harness Desktop"
+      "shortcutName": "DeepSeek Harness Desktop",
+      "artifactName": "DeepSeek-Harness-Desktop-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "DeepSeek-Harness-Desktop-Portable-${version}.${ext}"
     },
     "publish": [
       {
         "provider": "generic",
-        "url": "https://updates.dsh-desktop.example.com/"
+        "url": "https://github.com/Easyhoov/deepseek-harness-desktop/releases/latest/download"
       }
     ],
     "directories": {

@@ -22,7 +22,7 @@ Highlights:
 - Ships the official black-whale favicon as the app icon; `electron-updater` wired; NSIS + portable builds
 - Includes a repair tool for the upstream interruption-flush seq-reorder bug (`corrupt session log: seq gap in committed region`)
 
-- Repository: `<your repo URL>`
+- Repository: <https://github.com/Easyhoov/deepseek-harness-desktop>
 - Status: working on Windows (macOS/Linux packaging planned) · MIT · unofficial (not affiliated with DeepSeek)
 
 **中文：**
@@ -41,17 +41,17 @@ Highlights:
 
 **English:**
 
-**DeepSeek Harness Desktop** — unofficial in-process desktop packaging of DeepSeek Harness: host composition inside the Electron main process, `app://` dist loading, all API traffic over an IPC bridge, zero ports. Complements any plugin set with tray residency, native notifications driven by host events, crash recovery, and a session-log repair tool for the upstream interruption-flush seq bug. MIT, Windows builds (NSIS/portable), not affiliated with DeepSeek. Repository: `<your repo URL>`
+**DeepSeek Harness Desktop** — unofficial in-process desktop packaging of DeepSeek Harness: host composition inside the Electron main process, `app://` dist loading, all API traffic over an IPC bridge, zero ports. Complements any plugin set with tray residency, native notifications driven by host events, crash recovery, and a session-log repair tool for the upstream interruption-flush seq bug. MIT, Windows builds (NSIS/portable), not affiliated with DeepSeek. Repository: <https://github.com/Easyhoov/deepseek-harness-desktop>
 
 **中文：**
 
-**DeepSeek Harness Desktop** —— DeepSeek Harness 非官方进程内桌面封装：host 组合跑在 Electron 主进程、`app://` 加载前端、全部 API 走 IPC 桥、零端口。提供托盘常驻、宿主事件原生通知、崩溃恢复，以及上游"中断回合刷盘乱序"的会话日志修复工具。MIT，Windows（NSIS/便携版），与 DeepSeek 无隶属关系。仓库：`<your repo URL>`
+**DeepSeek Harness Desktop** —— DeepSeek Harness 非官方进程内桌面封装：host 组合跑在 Electron 主进程、`app://` 加载前端、全部 API 走 IPC 桥、零端口。提供托盘常驻、宿主事件原生通知、崩溃恢复，以及上游"中断回合刷盘乱序"的会话日志修复工具。MIT，Windows（NSIS/便携版），与 DeepSeek 无隶属关系。仓库：<https://github.com/Easyhoov/deepseek-harness-desktop>
 
 ---
 
 ## Checklist before submitting
 
-- [ ] Repository public, with `README.md` (English + 中文), `LICENSE`, and the unofficial disclaimer at the top
-- [ ] Replace `<your repo URL>` above with the real URL
-- [ ] Optional but helpful: tag the repo `dsh` + `deepseek-harness` (+ `dsh-plugin` only if the directory expects it)
-- [ ] Pick the right section (Infrastructure vs Plugins) and follow the target list's contribution format (issue vs PR)
+- [x] Repository public, with `README.md` (English + 中文), `LICENSE`, and the unofficial disclaimer at the top
+- [x] Repository URL: https://github.com/Easyhoov/deepseek-harness-desktop
+- [x] Topics set: `deepseek-harness`, `dsh-plugin`
+- [x] Pick the right section (Infrastructure vs Plugins) and follow the target list's contribution format (issue vs PR)

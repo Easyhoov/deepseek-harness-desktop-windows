@@ -200,6 +200,29 @@ window.__ModuleLoader__.load({
 			return Math.floor(days / 365) + " 年前";
 		}
 
+		// The desktop shell denies window.open / target=_blank (setWindowOpenHandler
+		// deny), so every external link must go through the openExternal bridge —
+		// otherwise clicking a repo card does nothing. Web UI falls back to a plain
+		// window.open.
+		function openRepo(url) {
+			if (typeof url !== "string" || url === "") return;
+			var ext = window.dshDesktop && typeof window.dshDesktop.openExternal === "function" ? window.dshDesktop.openExternal : null;
+			if (ext !== null) {
+				void ext(url);
+				return;
+			}
+			window.open(url, "_blank", "noopener");
+		}
+		function repoLinkProps(url) {
+			return {
+				href: url,
+				onClick: (e) => {
+					e.preventDefault();
+					openRepo(url);
+				},
+			};
+		}
+
 		function MarketplaceBody() {
 			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			var draft = useState("");
@@ -237,10 +260,8 @@ window.__ModuleLoader__.load({
 						createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" } },
 							createElement("span", { style: BADGE_STYLE }, TYPE_LABELS[item.type] || item.type),
 							createElement("a", {
-								href: item.url,
-								target: "_blank",
-								rel: "noreferrer",
-								style: { fontSize: "13px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--dsw-alias-label-primary, #e6ecff)", textDecoration: "none" },
+								...repoLinkProps(item.url),
+								style: { fontSize: "13px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--dsw-alias-label-primary, #e6ecff)", textDecoration: "none", cursor: "pointer" },
 							}, item.name),
 							meta !== "" ? createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", flex: "none" } }, meta) : null),
 						createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
@@ -252,9 +273,7 @@ window.__ModuleLoader__.load({
 					isApp
 						? createElement("a", {
 							key: "open",
-							href: item.url,
-							target: "_blank",
-							rel: "noreferrer",
+							...repoLinkProps(item.url),
 							style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" },
 						}, "打开仓库页")
 						: createElement("button", {

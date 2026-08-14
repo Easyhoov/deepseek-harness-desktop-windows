@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.3] — 2026-08-14
+
+### Fixed
+
+- **Marketplace repo links now open in the browser**: the desktop shell denies new-window requests (`setWindowOpenHandler` deny), so the repo-name links and "打开仓库页" buttons were silently dead. They now route through the `openExternal` bridge (same path as the chrome-bar links) and open the GitHub page in the default browser.
+
 ## [0.4.2] — 2026-08-14
 
 ### Changed

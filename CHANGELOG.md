@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.3.2] — 2026-08-14
+
+### Fixed
+
+- **Marketplace and file-changes panels were click-through**: the `shell.overlay` layer is pointer-transparent by design and entries must opt back in with `pointer-events: auto`; without it the panels rendered but every control inside them was dead ("no reaction" to clicks).
+- Marketplace now has a second entry point (⋯ menu → 插件市场, dispatched as a window event) and surfaces search failures (e.g. GitHub rate limits) instead of silently showing an empty list.
+
 ## [0.3.1] — 2026-08-14
 
 ### Fixed

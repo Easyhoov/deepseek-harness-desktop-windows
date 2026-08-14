@@ -269,9 +269,10 @@ window.dshDesktop = {
 	},
 	openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
 	marketplace: {
-		search: (query) => ipcRenderer.invoke('dsh:marketplace-search', { query }),
+		search: (query, type, sort) => ipcRenderer.invoke('dsh:marketplace-search', { query, type, sort }),
 		install: (pkg) => ipcRenderer.invoke('dsh:marketplace-install', { pkg }),
 		installed: () => ipcRenderer.invoke('dsh:marketplace-installed', {}),
+		resolve: (fullName, defaultBranch) => ipcRenderer.invoke('dsh:marketplace-resolve-package', { fullName, defaultBranch }),
 	},
 	fileChanges: {
 		get: (sessionId) => ipcRenderer.invoke('dsh:file-changes-get', { sessionId }),

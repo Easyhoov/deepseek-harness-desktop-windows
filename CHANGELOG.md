@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.8] — 2026-08-14
+
+### Added
+
+- **Monorepo plugin install**: when a repo's root is not a bundle but a workspace subdirectory (e.g. `packages/*`) declares `dsh.bundle`, the marketplace now installs it with `dsh plugin add github:<owner>/<repo>#path:<subdir>` instead of giving up.
+
 ## [0.4.7] — 2026-08-14
 
 ### Changed

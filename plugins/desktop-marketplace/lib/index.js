@@ -210,6 +210,65 @@ export function apply(ctx) {
 		return null;
 	}
 
+	// Monorepo bundles: when the repo root is not itself a bundle, look for a
+	// workspace subdirectory (packages/* etc.) whose package.json declares
+	// dsh.bundle, so it can install via `github:repo#path:subdir`.
+	async function findBundleSubdir(fullName, branches, workspaces) {
+		const dirs = new Set();
+		if (Array.isArray(workspaces)) {
+			for (const glob of workspaces) {
+				const m = /^([^/*]+)\/\*$/.exec(String(glob));
+				if (m !== null && m[1] !== '') dirs.add(m[1]);
+			}
+		}
+		for (const branch of branches) {
+			try {
+				const response = await fetchRepoFile(fullName, branch, 'pnpm-workspace.yaml');
+				if (response.status === 404) continue;
+				if (!response.ok) break;
+				const text = await response.text();
+				const re = /-\s*['"]?([^'"\s#*]+)\/\*/g;
+				let mm;
+				while ((mm = re.exec(text)) !== null) {
+					if (mm[1] !== undefined && mm[1] !== '') dirs.add(mm[1]);
+				}
+				break;
+			} catch {
+				break;
+			}
+		}
+		if (dirs.size === 0) dirs.add('packages');
+		const branch = branches[0];
+		let checked = 0;
+		for (const dir of dirs) {
+			let listing;
+			try {
+				const response = await fetch(`https://api.github.com/repos/${fullName}/contents/${dir}?ref=${encodeURIComponent(branch)}`, {
+					headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-desktop-marketplace' },
+					signal: AbortSignal.timeout(10_000),
+				});
+				if (!response.ok) continue;
+				listing = await response.json();
+			} catch {
+				continue;
+			}
+			if (!Array.isArray(listing)) continue;
+			for (const entry of listing) {
+				if (entry.type !== 'dir' || checked++ > 12) continue;
+				try {
+					const response = await fetchRepoFile(fullName, branch, `${dir}/${entry.name}/package.json`);
+					if (response.status === 404) continue;
+					if (!response.ok) break;
+					const pkg = await response.json();
+					if (isBundle(pkg)) return `${dir}/${entry.name}`;
+				} catch {
+					/* skip this subdir */
+				}
+			}
+		}
+		return null;
+	}
+
 	const offResolve = ui.on('dsh:marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
 		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
 		for (const branch of branchCandidates(defaultBranch)) {
@@ -244,7 +303,7 @@ export function apply(ctx) {
 		const hasTopic = (...keys) => topicList.some((t) => keys.some((k) => t.includes(k)));
 
 		// 1. package.json + npm registry status
-		const pkgInfo = { name: null, private: false, published: false, versions: null, latest: null, lastPublish: null, error: null, bundle: false };
+		const pkgInfo = { name: null, private: false, published: false, versions: null, latest: null, lastPublish: null, error: null, bundle: false, workspaces: [] };
 		for (const branch of branches) {
 			let pkg;
 			try {
@@ -259,6 +318,7 @@ export function apply(ctx) {
 			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) { pkgInfo.error = 'not-npm'; break; }
 			pkgInfo.name = pkg.name;
 			pkgInfo.bundle = isBundle(pkg);
+			pkgInfo.workspaces = Array.isArray(pkg.workspaces) ? pkg.workspaces : [];
 			if (pkg.private === true) { pkgInfo.private = true; pkgInfo.error = 'private'; break; }
 			const info = await fetchNpmInfo(pkg.name);
 			if (!info.reachable) { pkgInfo.error = 'network'; break; }
@@ -286,6 +346,19 @@ export function apply(ctx) {
 					install = { method: 'git', source: `github:${fullName}`, command: `dsh plugin --profile web add github:${fullName}`, note: '从 GitHub 安装（首次可能需在 pnpm-workspace.yaml 授权构建脚本）' };
 				} else {
 					install = { method: 'manual', source: null, command: null, note: '私有仓库，无法自动安装' };
+				}
+			} else if (!pkgInfo.private) {
+				// Root isn't a bundle — the plugin may live in a monorepo subdir.
+				const subdir = await findBundleSubdir(fullName, branches, pkgInfo.workspaces);
+				if (subdir !== null) {
+					install = { method: 'git', source: `github:${fullName}#path:${subdir}`, command: `dsh plugin --profile web add github:${fullName}#path:${subdir}`, note: 'monorepo 插件，从子目录安装（首次可能需授权构建脚本）' };
+				} else if (isSkill) {
+					install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字> 或项目 .dsh/skills/<名字>' };
+				} else if (isMcp) {
+					install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP，而不是安装为 DSH 插件' };
+				} else {
+					const script = await detectInstallScript(fullName, branches);
+					install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '不是 npm 组合包，安装方式见仓库 README' };
 				}
 			} else if (isSkill) {
 				install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字> 或项目 .dsh/skills/<名字>' };

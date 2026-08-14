@@ -5,3 +5,7 @@ release/
 Thumbs.db
 .vscode/
 .idea/
+
+# Downloaded mirror of third-party DSH docs (regenerate with scripts/fetch-dsh-docs.mjs)
+docs/dsh-docs/
+

@@ -32,7 +32,7 @@ import { installNotifications } from './notifications.mjs';
 import { createTray } from './tray.mjs';
 import { installUpdater } from './updates.mjs';
 import { runNpm } from './npm-runner.mjs';
-import { runDshPlugin } from './dsh-runner.mjs';
+import { runDshPlugin, startDshPlugin } from './dsh-runner.mjs';
 import { overlayAnchor, overlayVersion, bundledDshVersion, activeDshVersion, checkLatestDsh, installDshOverlay, rollbackDshOverlay } from './dsh-overlay.mjs';
 
 /** File log for packaged runs (the GUI binary detaches from the console). */
@@ -135,6 +135,10 @@ const desktopUi = {
 	/** Official `dsh plugin --profile web <args...>` (bundled dsh CLI + pnpm). */
 	dshPlugin(args) {
 		return runDshPlugin(args, { logLine });
+	},
+	/** Same, as a cancellable task with live output (`startDshPlugin`). */
+	dshPluginStart(args, opts) {
+		return startDshPlugin(args, { ...(opts ?? {}), logLine });
 	},
 	/** Set by the boot layer once the profile directory is known. */
 	profileDir: '',

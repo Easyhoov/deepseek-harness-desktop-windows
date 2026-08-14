@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
 		};
 
 		var store = {
-			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set(), detail: null, detailData: null, detailBusy: false, confirm: null },
+			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set(), detail: null, detailData: null, detailBusy: false, confirm: null, installState: null },
 			listeners: new Set(),
 			getSnapshot() { return store.state; },
 			subscribe(listener) {
@@ -82,12 +82,43 @@ window.__ModuleLoader__.load({
 		}
 
 		function doInstall(source) {
-			store.patch({ busy: true, confirm: null, note: "安装中…" });
+			if (bridge === null) return;
+			store.patch({ busy: true, confirm: null, note: "", installState: { source, lines: ["开始安装…"], done: false } });
 			void Promise.resolve(bridge.install(source)).then((result) => {
-				store.patch({ busy: false, note: result && result.ok ? result.note : "安装失败：" + (result && result.reason) });
+				store.patch({
+					busy: false,
+					installState: null,
+					note: result && result.ok ? result.note : "安装失败：" + (result && result.reason),
+				});
 				refreshInstalled();
 			});
 		}
+
+		function cancelInstall() {
+			if (bridge === null) return;
+			void Promise.resolve(bridge.installCancel());
+			store.patch({ note: "正在中止安装…" });
+		}
+
+		function uninstall(pkg) {
+			if (bridge === null) return;
+			store.patch({ busy: true, confirm: null, note: "卸载中…" });
+			void Promise.resolve(bridge.uninstall(pkg)).then((result) => {
+				store.patch({ busy: false, note: result && result.ok ? result.note : "卸载失败：" + (result && result.reason) });
+				refreshInstalled();
+			});
+		}
+
+		// Live install output from the host → the progress panel.
+		window.addEventListener("dsh-marketplace-install-progress", (event) => {
+			var s = store.state.installState;
+			if (s === null) return;
+			var detail = event.detail || {};
+			var line = String(detail.line || "").trim();
+			if (line === "") return;
+			var lines = s.lines.concat(line).slice(-30);
+			store.patch({ installState: { ...s, lines } });
+		});
 
 		function install(item) {
 			if (bridge === null) return;
@@ -353,7 +384,9 @@ window.__ModuleLoader__.load({
 				s.installed.length > 0
 					? createElement("div", { style: { marginTop: "12px", borderTop: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", paddingTop: "8px" } },
 						createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px" } }, "已安装（宿主运行时挂载）"),
-						s.installed.map((pkg) => createElement("div", { key: pkg, style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "3px 4px" } }, "· " + pkg)))
+						s.installed.map((pkg) => createElement("div", { key: pkg, style: { display: "flex", alignItems: "center", gap: "8px", padding: "3px 4px" } },
+							createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "· " + pkg),
+							createElement("button", { type: "button", style: { ...ACT_STYLE, padding: "1px 8px", fontSize: "10px" }, disabled: s.busy, onClick: () => uninstall(pkg) }, "卸载"))))
 					: null);
 		}
 
@@ -478,7 +511,10 @@ window.__ModuleLoader__.load({
 					: null,
 				createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
 					canInstall
-						? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => installBySource(install.source) }, s.busy ? "安装中…" : isInstalled ? "已安装" : "一键安装")
+						? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => installBySource(install.source) }, s.busy ? "安装中…" : "一键安装")
+						: null,
+					isInstalled && pkg !== null && pkg.name
+						? createElement("button", { type: "button", style: { ...ACT_STYLE, borderColor: "var(--dsw-alias-state-error-primary, #e81123)", color: "var(--dsw-alias-state-error-primary, #ff8a8a)" }, disabled: s.busy, onClick: () => uninstall(pkg.name) }, "卸载")
 						: null,
 					createElement("a", { ...repoLinkProps(item.url), style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" } }, "打开仓库页")),
 				installNote !== ""
@@ -633,6 +669,25 @@ window.__ModuleLoader__.load({
 						createElement("button", { type: "button", style: { ...ACT_STYLE, borderColor: "var(--dsw-alias-state-error-primary, #e81123)", color: "var(--dsw-alias-state-error-primary, #ff8a8a)" }, onClick: () => doInstall(source) }, "确认安装"))));
 		}
 
+		// ---- install progress panel -------------------------------------------
+		// Live pnpm output while an install runs, with a cancel button (the
+		// host kills the child; a 10-minute ceiling aborts hung downloads).
+		function InstallProgressPanel() {
+			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			var state = s.installState;
+			if (state === null) return null;
+			return createElement("div", { style: CONFIRM_OVERLAY_STYLE },
+				createElement("div", { style: CONFIRM_MASK_STYLE, onClick: () => {} }),
+				createElement("div", { style: { ...CONFIRM_PANEL_STYLE, width: "min(560px, 92vw)" }, role: "dialog", "aria-modal": "true" },
+					createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+						createElement("div", { style: { fontSize: "14px", fontWeight: 600, wordBreak: "break-all" } }, "正在安装 " + state.source),
+						createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", flex: "none" } }, "超时 10 分钟自动中止")),
+					createElement("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--ds-font-family-code, Consolas, monospace)", fontSize: "11px", lineHeight: "17px", color: "var(--dsw-alias-label-secondary, #b8c5ea)", background: "var(--dsw-alias-bg-layer-1, #0b1220)", borderRadius: "10px", padding: "10px 12px", maxHeight: "40vh", overflowY: "auto", margin: 0 } },
+						state.lines.join("\n")),
+					createElement("div", { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+						createElement("button", { type: "button", style: { ...ACT_STYLE, borderColor: "var(--dsw-alias-state-error-primary, #e81123)", color: "var(--dsw-alias-state-error-primary, #ff8a8a)" }, onClick: cancelInstall }, "取消安装"))));
+		}
+
 		// ---- opener -----------------------------------------------------------
 		// Preferred route: click the built-in 设置 trigger, then select the
 		// marketplace section in its nav rail — the panel then IS the settings
@@ -710,6 +765,13 @@ window.__ModuleLoader__.load({
 				label: "安装确认",
 				inject: () => ({}),
 			}, InstallConfirmDialog));
+			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+				name: "shell.overlay",
+				id: "marketplace-install-progress",
+				order: 40,
+				label: "安装进度",
+				inject: () => ({}),
+			}, InstallProgressPanel));
 			console.log("[dsh-desktop] marketplace mounted (settings-native)");
 		}
 

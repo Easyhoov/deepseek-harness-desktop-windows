@@ -50,14 +50,16 @@ function ensurePnpmShim() {
 }
 
 /**
- * Run `dsh plugin --profile web <args...>` to completion.
- * @returns {Promise<{code: number|null, stdout: string, stderr: string}>}
+ * Start `dsh plugin --profile web <args...>` as a cancellable task.
+ * @param {object} [opts] - logLine, onOutput(chunk, stream), timeoutMs.
+ * @returns {{done: Promise<{code:number|null, stdout:string, stderr:string, killed:boolean}>, kill(): void}}
  */
-export function runDshPlugin(args, { logLine } = {}) {
-	return new Promise((resolve) => {
+export function startDshPlugin(args, { logLine, onOutput, timeoutMs } = {}) {
+	let child = null;
+	let killed = false;
+	const done = new Promise((resolve) => {
 		let stdout = '';
 		let stderr = '';
-		let child;
 		try {
 			const shim = ensurePnpmShim();
 			const path = `${shim}${process.env.PATH ? ';' + process.env.PATH : ''}`;
@@ -71,34 +73,63 @@ export function runDshPlugin(args, { logLine } = {}) {
 				stdio: ['ignore', 'pipe', 'pipe'],
 			});
 		} catch (error) {
-			resolve({ code: null, stdout: '', stderr: String(error?.message ?? error) });
+			resolve({ code: null, stdout: '', stderr: String(error?.message ?? error), killed: false });
 			return;
 		}
 		const cap = (chunk) => {
 			const text = chunk.toString('utf8');
 			return text.length < 4096 ? text : text.slice(-4096);
 		};
+		const emit = (chunk, stream) => {
+			try {
+				onOutput?.(chunk.toString('utf8'), stream);
+			} catch {
+				/* best effort */
+			}
+		};
 		child.stdout.on('data', (chunk) => {
 			stdout = (stdout + cap(chunk)).slice(-16384);
+			emit(chunk, 'stdout');
 		});
 		child.stderr.on('data', (chunk) => {
 			stderr = (stderr + cap(chunk)).slice(-16384);
+			emit(chunk, 'stderr');
 		});
 		const timer = setTimeout(() => {
+			killed = true;
 			try {
 				child.kill();
 			} catch {
 				/* already gone */
 			}
-		}, 15 * 60 * 1000); // 15-minute ceiling (git builds can be slow)
+		}, timeoutMs ?? 15 * 60 * 1000); // generous ceiling (git builds can be slow)
 		child.on('error', (error) => {
 			clearTimeout(timer);
-			resolve({ code: null, stdout, stderr: String(error?.message ?? error) });
+			resolve({ code: null, stdout, stderr: String(error?.message ?? error), killed });
 		});
 		child.on('close', (code) => {
 			clearTimeout(timer);
-			logLine?.(`dsh plugin ${args.join(' ').slice(0, 80)} → ${code}`);
-			resolve({ code, stdout, stderr });
+			logLine?.(`dsh plugin ${args.join(' ').slice(0, 80)} → ${code}${killed ? ' (killed)' : ''}`);
+			resolve({ code, stdout, stderr, killed });
 		});
 	});
+	return {
+		done,
+		kill() {
+			killed = true;
+			try {
+				child?.kill();
+			} catch {
+				/* already gone */
+			}
+		},
+	};
+}
+
+/**
+ * Run `dsh plugin --profile web <args...>` to completion.
+ * @returns {Promise<{code: number|null, stdout: string, stderr: string}>}
+ */
+export function runDshPlugin(args, opts) {
+	return startDshPlugin(args, opts).done;
 }

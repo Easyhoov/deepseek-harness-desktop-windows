@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.2] — 2026-08-14
+
+### Added
+
+- **Install progress, cancel, and timeout** (referencing the community `dsh-webui-market-plugin`): a marketplace install now streams the live `dsh plugin add` (pnpm) output in a progress panel, can be cancelled mid-flight (the host kills the task), and aborts after 10 minutes instead of hanging silently on a slow network.
+- **Uninstall**: installed plugins can be removed (`dsh plugin remove`) from the detail view and the installed list, and the list refreshes immediately.
+
 ## [0.5.1] — 2026-08-14
 
 ### Fixed

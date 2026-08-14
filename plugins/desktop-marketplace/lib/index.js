@@ -397,15 +397,49 @@ export function apply(ctx) {
 		return { ok: true, pkg: pkgInfo, install, readme };
 	});
 
+	// One install at a time; the task stays cancellable and streams its output
+	// to the renderer (`dsh:marketplace-install-progress`), like the community
+	// dsh-webui-market-plugin.
+	let installTask = null;
 	const offInstall = ui.on('dsh:marketplace-install', async ({ source } = {}) => {
 		if (typeof source !== 'string' || source === '') return { ok: false, reason: 'invalid source' };
-		if (typeof ui.dshPlugin !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
-		const res = await ui.dshPlugin(['add', source]);
+		if (typeof ui.dshPluginStart !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
+		if (installTask !== null) return { ok: false, reason: '另一个安装正在进行，请先等待或取消' };
+		const push = (line) => {
+			ui.send('dsh:marketplace-install-progress', { source, line: String(line).slice(0, 500) });
+		};
+		const task = ui.dshPluginStart(['add', source], {
+			timeoutMs: 10 * 60 * 1000,
+			onOutput: (chunk) => push(chunk),
+		});
+		installTask = { source, kill: task.kill };
+		push('开始安装…');
+		const res = await task.done;
+		installTask = null;
+		push(res.killed ? '安装超时，已中止' : `退出码 ${res.code}`);
+		if (res.killed) return { ok: false, reason: '安装超时（10 分钟），已中止' };
 		if (res.code !== 0) {
 			const tail = (res.stderr || res.stdout || 'dsh plugin failed').trim().split('\n').slice(-8).join(' ');
 			return { ok: false, reason: tail.slice(-600) };
 		}
 		return { ok: true, mounted: false, note: '已安装进 web profile，重启应用后生效' };
+	});
+
+	const offCancel = ui.on('dsh:marketplace-install-cancel', () => {
+		if (installTask === null) return { ok: false, reason: '没有正在进行的安装' };
+		installTask.kill();
+		return { ok: true };
+	});
+
+	const offUninstall = ui.on('dsh:marketplace-uninstall', async ({ pkg } = {}) => {
+		if (typeof pkg !== 'string' || pkg === '') return { ok: false, reason: 'invalid package' };
+		if (typeof ui.dshPlugin !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
+		const res = await ui.dshPlugin(['remove', pkg]);
+		if (res.code !== 0) {
+			const tail = (res.stderr || res.stdout || 'dsh plugin failed').trim().split('\n').slice(-8).join(' ');
+			return { ok: false, reason: tail.slice(-600) };
+		}
+		return { ok: true, note: '已卸载，重启应用后生效' };
 	});
 
 	const offInstalled = ui.on('dsh:marketplace-installed', () => {
@@ -436,6 +470,8 @@ export function apply(ctx) {
 		offResolve();
 		offDetail();
 		offInstall();
+		offCancel();
+		offUninstall();
 		offInstalled();
 	}, 'desktop-marketplace lifecycle');
 }

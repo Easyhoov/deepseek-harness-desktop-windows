@@ -18,6 +18,8 @@ Most community wrappers spawn the `dsh web` CLI and point a browser window at `1
 |---|---|
 | 🧬 **In-process host** | Boots the shipped `web` profile with `dsh-app-boot`; no child process, no port, no HTTP server |
 | 🔌 **IPC transport** | `window.fetch` / `WebSocket` shims in preload carry all RPC over Electron IPC; the 37 shipped client plugins run **unmodified** |
+| 🪟 **Frameless glass chrome** | Custom-drawn 36px glass title bar (drag region, whale icon, version badge, ⋯ menu, min/max/close), Win11 rounded corners, startup splash — themed by the DSH UI's own CSS variables |
+| 💰 **Balance widget** | DeepSeek account balance in the composer dock (`余额 ¥X · 本轮 ¥Y`), per-turn cost folded from live provider usage; click → top-up page. A real dual-face dsh plugin (`plugins/desktop-balance`), mounted through the overlay like any shipped row |
 | 🪟 **Tray residency** | Close-to-tray keeps sessions running; tray menu shows/hides the window, checks updates, quits |
 | 🔔 **Native notifications** | Driven by the host's own event streams: approvals, questions, agent errors, dynamic-plugin run requests — always; reply-completion — only while the window is in the background (subagent sessions excluded) |
 | 🏠 **First-run home wizard** | Choose a private data directory or reuse `~/.dsh`; a live `dsh web` instance on the shared home triggers a conflict warning |

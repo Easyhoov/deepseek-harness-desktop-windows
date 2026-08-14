@@ -268,6 +268,11 @@ window.dshDesktop = {
 		action: (action, payload) => ipcRenderer.invoke('dsh:chrome-menu', { action, ...(payload ?? {}) }),
 	},
 	openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
+	marketplace: {
+		search: (query) => ipcRenderer.invoke('dsh:marketplace-search', { query }),
+		install: (pkg) => ipcRenderer.invoke('dsh:marketplace-install', { pkg }),
+		installed: () => ipcRenderer.invoke('dsh:marketplace-installed', {}),
+	},
 	fileChanges: {
 		get: (sessionId) => ipcRenderer.invoke('dsh:file-changes-get', { sessionId }),
 		revert: (sessionId, opId) => ipcRenderer.invoke('dsh:file-revert', { sessionId, opId }),
@@ -360,7 +365,9 @@ function installChrome() {
 			<button class="dch-btn dch-close" id="${CHROME_BAR_ID}-close" title="关闭（隐藏到托盘）">✕</button>
 		</div>
 		<div class="dch-menu" id="${CHROME_BAR_ID}-menu-panel">
-			<div class="dch-mi" data-act="check-updates">检查更新</div>
+			<div class="dch-mi" data-act="check-updates">检查应用更新</div>
+			<div class="dch-mi" data-act="check-dsh-update">更新 dsh（官方版）</div>
+			<div class="dch-mi" data-act="rollback-dsh">回退 dsh 到内置版</div>
 			<div class="dch-mi" data-act="about">关于</div>
 			<div class="dch-mi" data-act="quit">退出</div>
 		</div>`;

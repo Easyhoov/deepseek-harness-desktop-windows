@@ -21,6 +21,8 @@ Most community wrappers spawn the `dsh web` CLI and point a browser window at `1
 | 🪟 **Frameless glass chrome** | Custom-drawn 36px glass title bar (drag region, whale icon, version badge, ⋯ menu, min/max/close), Win11 rounded corners, startup splash — themed by the DSH UI's own CSS variables |
 | 💰 **Balance widget** | DeepSeek account balance in the composer dock (`余额 ¥X · 本轮 ¥Y`), per-turn cost folded from live provider usage; click → top-up page. A real dual-face dsh plugin (`plugins/desktop-balance`), mounted through the overlay like any shipped row |
 | 📝 **File changes + one-click restore** | Session-header "文件" button lists every write/edit the agent made (from the live event stream, with +/− line stats) and restores them one-by-one or all at once — guarded by a hard fence (session-cwd/workspace roots only, dangerous extensions refused, snippet swaps verify current content). Dual-face plugin `plugins/desktop-file-changes` |
+| 🛍️ **Plugin marketplace** | Sidebar "插件市场": search the GitHub `dsh-plugin` topic + npm registry, install with the **bundled npm** (no Node on the target machine), mount at runtime via `ctx.loader.create` — no restart for the host half, one UI reload for new client bundles. Dual-face plugin `plugins/desktop-marketplace` |
+| ⬆️ **Dual-channel updates** | Channel 1: `electron-updater` self-updates the shell from GitHub Releases. Channel 2 (⋯ menu → 更新 dsh): installs a newer official `@deepseek-ai/dsh` into `<userData>/agent` and boots the whole composition from it (healed fallback re-pointed in-process) — one-click rollback to the bundled copy |
 | 🪟 **Tray residency** | Close-to-tray keeps sessions running; tray menu shows/hides the window, checks updates, quits |
 | 🔔 **Native notifications** | Driven by the host's own event streams: approvals, questions, agent errors, dynamic-plugin run requests — always; reply-completion — only while the window is in the background (subagent sessions excluded) |
 | 🏠 **First-run home wizard** | Choose a private data directory or reuse `~/.dsh`; a live `dsh web` instance on the shared home triggers a conflict warning |
@@ -145,7 +147,7 @@ MIT. The packaged `@deepseek-ai/dsh` distribution and the whale favicon are © D
 
 ## 功能速览
 
-进程内 host（零端口）· IPC 传输（37 个出厂客户端插件零改动）· 托盘常驻（关窗继续跑）· 宿主事件流驱动的原生通知（审批/提问/错误/插件审批始终通知，回复完成仅窗口在后台时通知）· 首次启动 home 向导 + `dsh web` 冲突检测 · 渲染进程崩溃自动恢复 · 分块流式 IPC + 导出进度 · electron-updater 自动更新 · 黑鲸鱼官方图标 · 会话日志修复工具。
+进程内 host（零端口）· IPC 传输（37 个出厂客户端插件零改动）· 无边框玻璃标题栏（自绘 36px 玻璃条 + Win11 圆角 + 启动页）· 托盘常驻（关窗继续跑）· 宿主事件流驱动的原生通知（审批/提问/错误/插件审批始终通知，回复完成仅窗口在后台时通知）· 首次启动 home 向导 + `dsh web` 冲突检测 · 渲染进程崩溃自动恢复 · 分块流式 IPC + 导出进度 · **余额小部件**（`余额 ¥X · 本轮 ¥Y`，点击充值）· **文件改动一键还原**（路径围栏 + 危险扩展黑名单）· **插件市场**（GitHub `dsh-plugin` 主题 + npm 搜索，内置 npm 安装、运行时挂载免重启）· **双通道更新**（应用自更新 + dsh 官方版 overlay，一键回退）· electron-updater 自动更新 · 黑鲸鱼官方图标 · 会话日志修复工具。
 
 ## 快速开始
 

@@ -12,7 +12,7 @@
  *
  * @module dsh-desktop/boot
  */
-import { writeFileSync, mkdirSync, readdirSync, readFileSync, copyFileSync, statSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readdirSync, readFileSync, copyFileSync, statSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,6 +94,10 @@ const DESKTOP_PATCHES = [
 				id: 'ui-desktop-file-changes',
 				name: '@dsh-desktop/file-changes',
 			},
+			{
+				id: 'ui-desktop-marketplace',
+				name: '@dsh-desktop/marketplace',
+			},
 		],
 	},
 ];
@@ -152,11 +156,22 @@ function installDesktopPlugins(profileDir) {
  * @param {(code: number) => void} options.onExit - app exit requested by a booted app.
  * @returns {Promise<import('@deepseek-ai/cordis').Context>} the settled root context.
  */
-export async function bootDesktop({ webServer, directoryPicker, desktopUi, onExit }) {
-	healProfilesModuleFallback(INSTALL_ANCHOR);
-	const profile = loadProfile(NAME, 'web', INSTALL_ANCHOR, undefined, { userLayer: true });
+export async function bootDesktop({ webServer, directoryPicker, desktopUi, overlayAnchor, onExit }) {
+	// A user-installed overlay release of @deepseek-ai/dsh takes precedence
+	// over the bundled copy: the healed fallback junctions and the bundle
+	// resolution both follow this anchor, so the whole composition boots
+	// from the overlay in-process (rollback = remove the overlay).
+	const anchor = overlayAnchor !== undefined && overlayAnchor !== '' && existsSync(overlayAnchor)
+		? overlayAnchor
+		: INSTALL_ANCHOR;
+	healProfilesModuleFallback(anchor);
+	const profile = loadProfile(NAME, 'web', anchor, undefined, { userLayer: true });
 	writeFileSync(join(profile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG);
 	installDesktopPlugins(profile.dir);
+	if (desktopUi !== undefined) {
+		desktopUi.profileDir = profile.dir;
+		desktopUi.dshAnchor = anchor;
+	}
 
 	const homePatches = loadOptionalPatches(NAME, homePatchPath()) ?? [];
 	const bundlePatches = profile.layers.flatMap((layer) => layer.patches);
@@ -172,7 +187,7 @@ export async function bootDesktop({ webServer, directoryPicker, desktopUi, onExi
 			id: 'agent-presets',
 			config: {
 				...(rows.get('agent-presets')?.config ?? {}),
-				roots: [{ path: SHIPPED_PRESET_ROOT, trust: 'system' }],
+				roots: [{ path: join(dirname(anchor), 'config', 'agent-presets'), trust: 'system' }],
 			},
 		});
 	}

@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "npm": "^10.9.9"
   },
   "devDependencies": {
     "electron": "^37.0.0",

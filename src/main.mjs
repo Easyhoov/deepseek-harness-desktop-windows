@@ -31,6 +31,8 @@ import { resolveHome, guardSharedHome } from './home.mjs';
 import { installNotifications } from './notifications.mjs';
 import { createTray } from './tray.mjs';
 import { installUpdater } from './updates.mjs';
+import { runNpm } from './npm-runner.mjs';
+import { overlayAnchor, overlayVersion, bundledDshVersion, activeDshVersion, checkLatestDsh, installDshOverlay, rollbackDshOverlay } from './dsh-overlay.mjs';
 
 /** File log for packaged runs (the GUI binary detaches from the console). */
 function logLine(line) {
@@ -125,6 +127,12 @@ const desktopUi = {
 		});
 		return () => ipcMain.removeHandler(channel);
 	},
+	/** Self-contained npm (bundled package under Electron's own Node). */
+	npm(args) {
+		return runNpm(args, { logLine });
+	},
+	/** Set by the boot layer once the profile directory is known. */
+	profileDir: '',
 };
 
 function showWindow() {
@@ -356,7 +364,7 @@ function installChromeIpc() {
 	};
 	ipcMain.handle('dsh:chrome-init', (event) => {
 		if (!trusted(event)) return null;
-		return { appName: APP_NAME, appVersion: app.getVersion(), dshVersion: '' };
+		return { appName: APP_NAME, appVersion: app.getVersion(), dshVersion: activeDshVersion(app.getPath('userData')) };
 	});
 	ipcMain.handle('dsh:chrome-window', (event, { action } = {}) => {
 		if (!trusted(event)) return false;
@@ -379,12 +387,65 @@ function installChromeIpc() {
 				return false;
 		}
 	});
-	ipcMain.handle('dsh:chrome-menu', (event, { action } = {}) => {
+	ipcMain.handle('dsh:chrome-menu', async (event, { action } = {}) => {
 		if (!trusted(event)) return null;
+		const userData = app.getPath('userData');
 		switch (action) {
 			case 'check-updates':
 				void updater?.check();
 				return true;
+			case 'check-dsh-update': {
+				const current = activeDshVersion(userData);
+				const latest = await checkLatestDsh({ logLine });
+				if (latest === null) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'warning', title: APP_NAME, message: '检查失败', detail: '无法查询官方 @deepseek-ai/dsh 版本（npm 网络不可达？）', buttons: ['确定'], noLink: true });
+					return true;
+				}
+				if (latest === current) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'info', title: APP_NAME, message: 'dsh 已是最新', detail: `当前 ${current}（官方最新 ${latest}）`, buttons: ['确定'], noLink: true });
+					return true;
+				}
+				const choice = dialog.showMessageBoxSync(getWindow(), {
+					type: 'info',
+					title: APP_NAME,
+					message: `发现官方 dsh 新版本 ${latest}`,
+					detail: `当前 ${current}。更新会安装官方发行版到用户目录，重启后生效（可一键回退内置版）。`,
+					buttons: ['立即更新', '取消'],
+					defaultId: 0,
+					cancelId: 1,
+					noLink: true,
+				});
+				if (choice !== 0) return true;
+				notifications?.notify('DSH · 正在更新 dsh', `下载并安装官方 ${latest}…`);
+				const result = await installDshOverlay(userData, latest, { logLine });
+				if (!result.ok) {
+					dialog.showErrorBox('dsh 更新失败', result.reason);
+					return true;
+				}
+				const again = dialog.showMessageBoxSync(getWindow(), {
+					type: 'info', title: APP_NAME, message: 'dsh 更新完成', detail: `官方 ${latest} 已安装，重启应用后生效。`, buttons: ['立即重启', '稍后'], defaultId: 0, cancelId: 1, noLink: true,
+				});
+				if (again === 0) {
+					app.relaunch();
+					quitApp(0);
+				}
+				return true;
+			}
+			case 'rollback-dsh': {
+				const overlay = overlayVersion(userData);
+				if (overlay === null) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'info', title: APP_NAME, message: '没有可回退的 overlay', detail: `当前使用内置版 ${bundledDshVersion()}`, buttons: ['确定'], noLink: true });
+					return true;
+				}
+				const choice = dialog.showMessageBoxSync(getWindow(), {
+					type: 'question', title: APP_NAME, message: `回退到内置 dsh ${bundledDshVersion()}？`, detail: `将移除用户目录的 overlay（${overlay}），重启后生效。`, buttons: ['回退并重启', '取消'], defaultId: 0, cancelId: 1, noLink: true,
+				});
+				if (choice !== 0) return true;
+				rollbackDshOverlay(userData);
+				app.relaunch();
+				quitApp(0);
+				return true;
+			}
 			case 'quit':
 				quitApp(0);
 				return true;
@@ -393,7 +454,7 @@ function installChromeIpc() {
 					type: 'info',
 					title: APP_NAME,
 					message: APP_NAME,
-					detail: `版本 ${app.getVersion()}\n非官方 DeepSeek Harness 桌面版（MIT）`,
+					detail: `版本 ${app.getVersion()}\ndsh ${activeDshVersion(userData)}${overlayVersion(userData) !== null ? '（overlay）' : '（内置）'}\n非官方 DeepSeek Harness 桌面版（MIT）`,
 					buttons: ['确定'],
 					noLink: true,
 				});
@@ -464,9 +525,16 @@ async function run() {
 		},
 	};
 
-	ctx = await bootDesktop({ webServer, directoryPicker, desktopUi, onExit: quitApp });
+	ctx = await bootDesktop({
+		webServer,
+		directoryPicker,
+		desktopUi,
+		overlayAnchor: overlayAnchor(app.getPath('userData')),
+		onExit: quitApp,
+	});
 	logLine('boot ok');
 	installChromeIpc();
+	logLine(`dsh ${activeDshVersion(app.getPath('userData'))} (${overlayVersion(app.getPath('userData')) !== null ? 'overlay' : 'bundled'})`);
 
 	const clientModules = ctx.get('clientModules');
 	if (clientModules === undefined) {

@@ -1,0 +1,22 @@
+{
+  "name": "@dsh-desktop/marketplace",
+  "version": "0.2.1",
+  "description": "In-app plugin marketplace for the desktop app: search the dsh-plugin GitHub topic and the npm registry, install with the bundled npm, and mount at runtime via the Cordis Loader (no restart).",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "license": "MIT"
+}

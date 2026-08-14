@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.1] — 2026-08-14
+
+### Fixed
+
+- **Desktop plugins (marketplace / file-changes / balance) missing after 0.5.0**: the `dsh plugin add` bundle install silently failed in the packaged app. Three root causes in the runner: (a) pnpm's `exports` map hides `./package.json`, so the CLI-path resolution threw; (b) install paths containing spaces (e.g. `…\DeepSeek Harness Desktop\…`) were split by the shell when `dsh plugin` forwarded specs to pnpm; (c) the child-process paths still pointed inside `app.asar` instead of the asar-unpacked real files. All three are fixed — the shipped bundles now install and register on the next boot.
+
 ## [0.5.0] — 2026-08-14
 
 ### Changed

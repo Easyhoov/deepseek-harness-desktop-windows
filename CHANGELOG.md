@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.3.1] — 2026-08-14
+
+### Fixed
+
+- **Installed builds crashed at startup** (`ERR_MODULE_NOT_FOUND: @deepseek-ai/cordis-plugin-group` from `dsh-app-boot`): electron-builder's node-modules collector pruned the 19 packages npm auto-installed to satisfy peerDependencies. They are now pinned as explicit root dependencies; the packaged tree matches dev 195/195.
+
 ## [0.3.0] — 2026-08-14
 
 ### Added

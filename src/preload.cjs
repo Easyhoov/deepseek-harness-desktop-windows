@@ -273,6 +273,7 @@ window.dshDesktop = {
 		install: (pkg) => ipcRenderer.invoke('dsh:marketplace-install', { pkg }),
 		installed: () => ipcRenderer.invoke('dsh:marketplace-installed', {}),
 		resolve: (fullName, defaultBranch) => ipcRenderer.invoke('dsh:marketplace-resolve-package', { fullName, defaultBranch }),
+		detail: (fullName, defaultBranch) => ipcRenderer.invoke('dsh:marketplace-detail', { fullName, defaultBranch }),
 	},
 	fileChanges: {
 		get: (sessionId) => ipcRenderer.invoke('dsh:file-changes-get', { sessionId }),

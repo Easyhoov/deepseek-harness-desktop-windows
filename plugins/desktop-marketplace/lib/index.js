@@ -123,39 +123,83 @@ export function apply(ctx) {
 		};
 	});
 
-	// True only when the name is actually published to the npm registry with
-	// at least one version — catches squatted/placeholder packages that exist
-	// as names but can never be installed (e.g. the empty "open-design" name).
-	async function verifyNpmPackage(name) {
+	// Registry metadata for one package name; used both to reject placeholders
+	// and to power the in-app detail view. `reachable:false` means the registry
+	// call itself failed (network), `published:false` means the name exists but
+	// nothing can be installed.
+	async function fetchNpmInfo(name) {
 		try {
 			const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`, {
 				headers: { accept: 'application/vnd.npm.install-v1+json' },
 				signal: AbortSignal.timeout(10_000),
 			});
-			if (!response.ok) return false;
+			if (!response.ok) return { reachable: true, published: false };
 			const data = await response.json();
 			const tags = data['dist-tags'];
-			return (tags !== null && typeof tags === 'object' && typeof tags.latest === 'string')
-				|| (Array.isArray(data.versions) ? data.versions.length > 0 : Boolean(data.versions && Object.keys(data.versions).length > 0));
+			const latest = tags !== null && typeof tags === 'object' && typeof tags.latest === 'string' ? tags.latest : null;
+			const versions = data.versions !== null && typeof data.versions === 'object' ? Object.keys(data.versions).length : 0;
+			return {
+				reachable: true,
+				published: latest !== null || versions > 0,
+				versions,
+				latest,
+				// abbreviated metadata has no per-version `time`; `modified` is the
+				// registry's last-publish touch date, close enough for display.
+				lastPublish: typeof data.modified === 'string' && data.modified !== '' ? data.modified : null,
+			};
 		} catch {
-			return false;
+			return { reachable: false, published: false };
 		}
+	}
+
+	// True only when the name is actually published to the npm registry with
+	// at least one version — catches squatted/placeholder packages that exist
+	// as names but can never be installed (e.g. the empty "open-design" name).
+	async function verifyNpmPackage(name) {
+		const info = await fetchNpmInfo(name);
+		return info.reachable && info.published;
+	}
+
+	function branchCandidates(defaultBranch) {
+		const branches = [];
+		for (const branch of [defaultBranch, 'main', 'master']) {
+			if (typeof branch === 'string' && branch !== '' && branches.indexOf(branch) === -1) branches.push(branch);
+		}
+		return branches;
+	}
+
+	// raw.githubusercontent.com is unstable from some networks (CN in
+	// particular). On any failure there we fall back to the GitHub contents
+	// API with a raw Accept header; 404 semantics are preserved for callers.
+	async function fetchRepoFile(fullName, branch, path) {
+		let response;
+		try {
+			response = await fetch(`https://raw.githubusercontent.com/${fullName}/${branch}/${path}`, {
+				signal: AbortSignal.timeout(6_000),
+			});
+			if (response.status !== 404 && !response.ok) throw new Error(`raw ${response.status}`);
+			if (response.status !== 404) return response;
+		} catch {
+			/* raw unreachable — try the API */
+		}
+		response = await fetch(`https://api.github.com/repos/${fullName}/contents/${path}?ref=${encodeURIComponent(branch)}`, {
+			headers: { accept: 'application/vnd.github.raw+json', 'user-agent': 'dsh-desktop-marketplace' },
+			signal: AbortSignal.timeout(10_000),
+		});
+		return response;
 	}
 
 	const offResolve = ui.on('dsh:marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
 		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
-		for (const branch of [defaultBranch, 'main', 'master']) {
-			if (typeof branch !== 'string' || branch === '') continue;
+		for (const branch of branchCandidates(defaultBranch)) {
 			let pkg;
 			try {
-				const response = await fetch(`https://raw.githubusercontent.com/${fullName}/${branch}/package.json`, {
-					signal: AbortSignal.timeout(10_000),
-				});
+				const response = await fetchRepoFile(fullName, branch, 'package.json');
 				if (response.status === 404) continue; // branch has no package.json — try the next one
 				if (!response.ok) return { ok: false, reason: 'network' };
 				pkg = await response.json();
 			} catch {
-				return { ok: false, reason: 'network' }; // raw.githubusercontent unreachable (common CN network case)
+				return { ok: false, reason: 'network' }; // unreachable (common CN network case)
 			}
 			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) return { ok: false, reason: 'not-npm' };
 			if (pkg.private === true) return { ok: false, reason: 'private', name: pkg.name }; // app/private repo, never published
@@ -163,6 +207,59 @@ export function apply(ctx) {
 			return { ok: true, name: pkg.name };
 		}
 		return { ok: false, reason: 'not-npm' };
+	});
+
+	// One repository's detail payload for the in-app detail view: npm publish
+	// status plus the README body. Every piece degrades independently.
+	const offDetail = ui.on('dsh:marketplace-detail', async ({ fullName, defaultBranch } = {}) => {
+		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
+		const branches = branchCandidates(defaultBranch);
+
+		// 1. package.json + npm registry status
+		const pkgInfo = { name: null, private: false, published: false, versions: null, latest: null, lastPublish: null, error: null };
+		for (const branch of branches) {
+			let pkg;
+			try {
+				const response = await fetchRepoFile(fullName, branch, 'package.json');
+				if (response.status === 404) continue;
+				if (!response.ok) { pkgInfo.error = 'network'; break; }
+				pkg = await response.json();
+			} catch {
+				pkgInfo.error = 'network';
+				break;
+			}
+			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) { pkgInfo.error = 'not-npm'; break; }
+			pkgInfo.name = pkg.name;
+			if (pkg.private === true) { pkgInfo.private = true; pkgInfo.error = 'private'; break; }
+			const info = await fetchNpmInfo(pkg.name);
+			if (!info.reachable) { pkgInfo.error = 'network'; break; }
+			pkgInfo.published = info.published;
+			pkgInfo.versions = info.versions;
+			pkgInfo.latest = info.latest;
+			pkgInfo.lastPublish = info.lastPublish;
+			if (!info.published) pkgInfo.error = 'unpublished';
+			break;
+		}
+		if (pkgInfo.name === null && pkgInfo.error === null) pkgInfo.error = 'not-npm';
+
+		// 2. README (common filenames, first non-empty wins)
+		let readme = null;
+		for (const branch of branches) {
+			for (const file of ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README']) {
+				try {
+					const response = await fetchRepoFile(fullName, branch, file);
+					if (response.status === 404) continue;
+					if (!response.ok) break;
+					const text = await response.text();
+					if (String(text).trim() !== '') { readme = text; break; }
+				} catch {
+					break;
+				}
+			}
+			if (readme !== null) break;
+		}
+
+		return { ok: true, pkg: pkgInfo, readme };
 	});
 
 	const offInstall = ui.on('dsh:marketplace-install', async ({ pkg } = {}) => {
@@ -196,6 +293,7 @@ export function apply(ctx) {
 	ctx.effect(() => () => {
 		offSearch();
 		offResolve();
+		offDetail();
 		offInstall();
 		offInstalled();
 	}, 'desktop-marketplace lifecycle');

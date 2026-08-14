@@ -4,6 +4,16 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.4] — 2026-08-14
+
+### Added
+
+- **In-app repository details**: every GitHub entry in the marketplace now has a "详情" action that opens a detail view inside the panel — full description, npm publish status (package name / version count / latest / last update, or the precise reason it cannot be installed), a cleaned plain-text README, one-click install, and open-repo links. No need to leave the app to judge a plugin.
+
+### Fixed
+
+- **Unstable `raw.githubusercontent.com` fallback**: repo file fetches (package.json + README) now retry via the GitHub contents API when raw is unreachable — the common CN-network case that previously surfaced as "解析失败（网络不可达）" for everything.
+
 ## [0.4.3] — 2026-08-14
 
 ### Fixed

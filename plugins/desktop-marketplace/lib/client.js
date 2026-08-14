@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
 		};
 
 		var store = {
-			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set() },
+			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set(), detail: null, detailData: null, detailBusy: false },
 			listeners: new Set(),
 			getSnapshot() { return store.state; },
 			subscribe(listener) {
@@ -73,17 +73,19 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		function installByName(pkg) {
+			if (bridge === null) return;
+			store.patch({ busy: true, note: "安装中…" });
+			void Promise.resolve(bridge.install(pkg)).then((result) => {
+				store.patch({ busy: false, note: result && result.ok ? result.note : "安装失败：" + (result && result.reason) });
+				refreshInstalled();
+			});
+		}
+
 		function install(item) {
 			if (bridge === null) return;
-			var doInstall = function (pkg) {
-				store.patch({ busy: true, note: "安装中…" });
-				void Promise.resolve(bridge.install(pkg)).then((result) => {
-					store.patch({ busy: false, note: result && result.ok ? result.note : "安装失败：" + (result && result.reason) });
-					refreshInstalled();
-				});
-			};
 			if (item.source === "npm") {
-				doInstall(item.name);
+				installByName(item.name);
 				return;
 			}
 			// GitHub repo: resolve the npm package name first.
@@ -95,13 +97,29 @@ window.__ModuleLoader__.load({
 				next.delete(item.id);
 				if (result && result.ok) {
 					store.patch({ resolving: next });
-					doInstall(result.name);
+					installByName(result.name);
 				} else {
 					var reason = result && result.reason ? result.reason : "not-npm";
 					var note = RESOLVE_NOTES[reason] || " 不是 npm 包，无法一键安装（可到仓库页查看安装方式）";
 					store.patch({ resolving: next, note: item.name + note });
 				}
 			});
+		}
+
+		function openDetail(item) {
+			if (bridge === null || item.source !== "github") return;
+			store.patch({ detail: item, detailData: null, detailBusy: true, note: "" });
+			void Promise.resolve(bridge.detail(item.name, item.defaultBranch)).then((result) => {
+				if (result && result.ok) {
+					store.patch({ detailData: result, detailBusy: false });
+				} else {
+					store.patch({ detailData: null, detailBusy: false, note: "详情加载失败，请稍后重试" });
+				}
+			});
+		}
+
+		function closeDetail() {
+			store.patch({ detail: null, detailData: null, detailBusy: false });
 		}
 
 		// Sidebar-foot entry styled like the built-in 设置 trigger row.
@@ -228,6 +246,7 @@ window.__ModuleLoader__.load({
 			var draft = useState("");
 			var query = draft[0];
 			var setQuery = draft[1];
+			if (s.detail !== null) return createElement(MarketplaceDetail);
 
 			var chips = ["recommended", "plugin", "skill", "application", "infrastructure", "channel", "collection", "directory"];
 			var chipRow = chips.map((type) => {
@@ -270,18 +289,22 @@ window.__ModuleLoader__.load({
 							? createElement("div", { style: { marginTop: "3px" } },
 								item.topics.map((topic) => createElement("span", { key: topic, style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", marginRight: "6px" } }, "#" + topic)))
 							: null),
-					isApp
-						? createElement("a", {
-							key: "open",
-							...repoLinkProps(item.url),
-							style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" },
-						}, "打开仓库页")
-						: createElement("button", {
-							type: "button",
-							style: ACT_STYLE,
-							disabled: s.busy || isInstalled || resolving,
-							onClick: () => install(item),
-						}, isInstalled ? "已安装" : resolving ? "解析中…" : "安装"));
+					createElement("div", { style: { display: "flex", gap: "8px", flex: "none", alignItems: "center" } },
+						item.source === "github"
+							? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.detailBusy, onClick: () => openDetail(item) }, "详情")
+							: null,
+						isApp
+							? createElement("a", {
+								key: "open",
+								...repoLinkProps(item.url),
+								style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" },
+							}, "打开仓库页")
+							: createElement("button", {
+								type: "button",
+								style: ACT_STYLE,
+								disabled: s.busy || isInstalled || resolving,
+								onClick: () => install(item),
+							}, isInstalled ? "已安装" : resolving ? "解析中…" : "安装")));
 			});
 
 			var updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : "—";
@@ -318,6 +341,93 @@ window.__ModuleLoader__.load({
 						createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px" } }, "已安装（宿主运行时挂载）"),
 						s.installed.map((pkg) => createElement("div", { key: pkg, style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "3px 4px" } }, "· " + pkg)))
 					: null);
+		}
+
+		// ---- in-app detail view ----------------------------------------------
+		// Strips the worst markdown noise so a README reads as plain text.
+		function cleanReadme(text) {
+			var t = String(text || "");
+			t = t.replace(/^---[\s\S]*?---\n/, ""); // YAML front matter
+			t = t.replace(/<[^>]+>/g, ""); // html tags
+			t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, ""); // images
+			t = t.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1"); // links → text
+			t = t.replace(/^#{1,6}\s*/gm, ""); // headings
+			t = t.replace(/```/g, ""); // code fences
+			t = t.replace(/`/g, ""); // inline code
+			t = t.replace(/^\s*[-*+]\s+/gm, "· "); // list items
+			t = t.replace(/^\s*>\s?/gm, ""); // blockquotes
+			t = t.replace(/^\s*[-=]{3,}\s*$/gm, ""); // hr lines
+			t = t.replace(/^(\s*)\|.*$/gm, ""); // table rows
+			t = t.replace(/\*\*([^*]+)\*\*/g, "$1");
+			t = t.replace(/\*([^*]+)\*/g, "$1");
+			t = t.replace(/~~([^~]+)~~/g, "$1");
+			t = t.replace(/\n{3,}/g, "\n\n");
+			t = t.trim();
+			if (t.length > 6000) t = t.slice(0, 6000) + "\n\n…（内容过长已截断）";
+			return t;
+		}
+
+		function MarketplaceDetail() {
+			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			var item = s.detail;
+			if (item === null) return null;
+			var data = s.detailData;
+			var pkg = data && data.pkg ? data.pkg : null;
+			var isApp = item.type === "application" || (item.topics || []).indexOf("desktop-app") !== -1;
+			var isInstalled = pkg !== null && pkg.name ? s.installed.indexOf(pkg.name) !== -1 : false;
+			var meta = [
+				item.source === "github" && item.stars != null ? "★ " + item.stars : "",
+				updatedLabel(item.pushedAt),
+			].filter(Boolean).join(" · ");
+
+			var npmLine = "";
+			var npmErrorLine = "";
+			if (s.detailBusy) {
+				npmLine = "正在获取 npm 发布信息…";
+			} else if (pkg === null) {
+				npmLine = "仓库信息暂不可用";
+			} else if (pkg.error === "private") {
+				npmErrorLine = "该仓库为私有/应用仓库，未发布到 npm，无法一键安装；安装方式见仓库页";
+			} else if (pkg.error === "unpublished") {
+				npmErrorLine = "npm 上无可用版本（同名包为空占位），无法一键安装；安装方式见仓库页";
+			} else if (pkg.error === "network") {
+				npmErrorLine = "无法连接 npm registry（网络问题），安装信息暂不可用；可到仓库页查看";
+			} else if (pkg.error === "not-npm") {
+				npmErrorLine = "该仓库不是 npm 包，无法一键安装；安装方式见仓库页";
+			} else if (pkg.published) {
+				npmLine = "npm：" + pkg.name + " · " + (pkg.versions || 0) + " 个版本 · 最新 " + (pkg.latest || "—") + (pkg.lastPublish ? " · 更新于 " + new Date(pkg.lastPublish).toLocaleDateString() : "");
+			} else {
+				npmErrorLine = "该包未发布到 npm";
+			}
+
+			var readme = data && data.readme && String(data.readme).trim() !== "" ? cleanReadme(data.readme) : null;
+			var canInstall = !isApp && !isInstalled && !s.busy && pkg !== null && pkg.name && !pkg.error && pkg.published;
+
+			return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "10px", color: "var(--dsw-alias-label-primary, #e6ecff)" } },
+				createElement("button", { type: "button", style: { ...ACT_STYLE, alignSelf: "flex-start" }, onClick: closeDetail }, "← 返回"),
+				createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+					createElement("span", { style: BADGE_STYLE }, TYPE_LABELS[item.type] || item.type),
+					createElement("a", { ...repoLinkProps(item.url), style: { fontSize: "15px", fontWeight: 600, color: "var(--dsw-alias-label-primary, #e6ecff)", textDecoration: "none", cursor: "pointer" } }, item.name),
+					meta !== "" ? createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)" } }, meta) : null),
+				item.description
+					? createElement("div", { style: { fontSize: "13px", lineHeight: "20px", color: "var(--dsw-alias-label-secondary, #b8c5ea)" } }, item.description)
+					: null,
+				createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+					canInstall
+						? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => installByName(pkg.name) }, s.busy ? "安装中…" : "一键安装")
+						: null,
+					createElement("a", { ...repoLinkProps(item.url), style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" } }, "打开仓库页")),
+				pkg !== null
+					? createElement("div", { style: { border: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", borderRadius: "10px", padding: "8px 12px", fontSize: "12px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary, #b8c5ea)" } }, npmLine || npmErrorLine)
+					: null,
+				readme !== null
+					? createElement("div", { style: { borderTop: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", paddingTop: "10px" } },
+						createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "6px" } }, "README"),
+						createElement("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--dsw-font-family, \"Segoe UI\", system-ui, sans-serif)", fontSize: "12px", lineHeight: "19px", color: "var(--dsw-alias-label-secondary, #b8c5ea)", maxHeight: "38vh", overflowY: "auto", margin: 0, paddingRight: "4px" } }, readme),
+						createElement("a", { ...repoLinkProps(item.url), style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", cursor: "pointer", textDecoration: "none" } }, "在 GitHub 查看完整 README →"))
+					: s.detailBusy
+						? createElement("div", { style: { fontSize: "12px", color: "var(--dsw-alias-label-tertiary, #93a5d8)" } }, "README 加载中…")
+						: null);
 		}
 
 		// ---- settings-native section ------------------------------------------

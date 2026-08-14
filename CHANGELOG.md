@@ -4,6 +4,17 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.0] — 2026-08-14
+
+### Added
+
+- **Catalog-first plugin marketplace**: a GitHub Action collects the `dsh-plugin` / `deepseek-harness` / `dsh` topic repos, classifies them into 插件/技能/应用/基础设施/渠道/合集/目录 and scores them (stars × recency); the app fetches `catalog/catalog.json` from the repo with a 24h disk cache — instant search, no GitHub rate limits, offline-capable. The panel gains category chips with counts, 推荐/stars/updated sorting, type badges, topics and update times on cards.
+- GitHub-repo install now resolves the npm package name from the repo's `package.json` before installing.
+
+### Fixed
+
+- **RPC channel prefix mismatch**: plugin handlers registered as `ui.on('marketplace-search')` while the renderer called `dsh:marketplace-search` — search/install/restore RPCs never reached the host (marketplace and file-changes alike). Channels are now consistently `dsh:`-prefixed.
+
 ## [0.3.2] — 2026-08-14
 
 ### Fixed

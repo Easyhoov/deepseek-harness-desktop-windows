@@ -264,7 +264,7 @@ export function apply(ctx) {
 
 	// ---- renderer RPC ------------------------------------------------------
 	const offHandlers = [
-		ui.on('file-changes-get', ({ sessionId }) => {
+		ui.on('dsh:file-changes-get', ({ sessionId }) => {
 			const record = records.get(sessionId);
 			if (record === undefined) return { ok: true, cwd: '', changes: [] };
 			return {
@@ -277,13 +277,13 @@ export function apply(ctx) {
 				})),
 			};
 		}),
-		ui.on('file-revert', ({ sessionId, opId }) => {
+		ui.on('dsh:file-revert', ({ sessionId, opId }) => {
 			const record = records.get(sessionId);
 			const op = record?.ops.find((candidate) => candidate.id === opId);
 			if (op === undefined) return { ok: false, reason: 'unknown op' };
 			return applyRevert(record, op);
 		}),
-		ui.on('file-revert-all', ({ sessionId }) => {
+		ui.on('dsh:file-revert-all', ({ sessionId }) => {
 			const record = records.get(sessionId);
 			if (record === undefined) return { ok: false, reason: 'no record' };
 			const results = [];

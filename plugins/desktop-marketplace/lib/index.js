@@ -86,7 +86,7 @@ export function apply(ctx) {
 			}));
 	}
 
-	const offSearch = ui.on('marketplace-search', async ({ query = '', type = 'recommended', sort = 'score' } = {}) => {
+	const offSearch = ui.on('dsh:marketplace-search', async ({ query = '', type = 'recommended', sort = 'score' } = {}) => {
 		const cat = await loadCatalog(false);
 		let repos = cat.repos ?? [];
 		const q = String(query ?? '').trim().toLowerCase();
@@ -123,7 +123,7 @@ export function apply(ctx) {
 		};
 	});
 
-	const offResolve = ui.on('marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
+	const offResolve = ui.on('dsh:marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
 		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid repository' };
 		for (const branch of [defaultBranch, 'main', 'master']) {
 			if (typeof branch !== 'string' || branch === '') continue;
@@ -143,7 +143,7 @@ export function apply(ctx) {
 		return { ok: false, reason: 'not an npm package' };
 	});
 
-	const offInstall = ui.on('marketplace-install', async ({ pkg } = {}) => {
+	const offInstall = ui.on('dsh:marketplace-install', async ({ pkg } = {}) => {
 		if (typeof pkg !== 'string' || !PKG_NAME_PATTERN.test(pkg)) return { ok: false, reason: 'invalid package name' };
 		if (typeof ui.profileDir !== 'string' || ui.profileDir === '') return { ok: false, reason: 'profile directory unknown' };
 		if (typeof ui.npm !== 'function') return { ok: false, reason: 'npm runner unavailable' };
@@ -160,7 +160,7 @@ export function apply(ctx) {
 		}
 	});
 
-	const offInstalled = ui.on('marketplace-installed', () => {
+	const offInstalled = ui.on('dsh:marketplace-installed', () => {
 		const names = [];
 		if (loader !== undefined) {
 			for (const entry of loader.entries()) names.push(entry.options.name);

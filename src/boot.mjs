@@ -29,7 +29,7 @@ import {
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline';
-import { addPlugins } from './dsh-runner.mjs';
+import { addPlugins, removePlugin } from './dsh-runner.mjs';
 
 /** This app's install anchor: the dsh CLI package.json inside our node_modules. */
 export const INSTALL_ANCHOR = (() => {
@@ -78,7 +78,8 @@ const DESKTOP_PATCHES = parseYaml(readFileSync(DESKTOP_PATCH_PATH, 'utf8'));
 const DESKTOP_BUNDLES = [
 	{ id: '@dsh-desktop/balance', dir: 'desktop-balance' },
 	{ id: '@dsh-desktop/file-changes', dir: 'desktop-file-changes' },
-	{ id: '@dsh-desktop/marketplace', dir: 'desktop-marketplace' },
+	// The marketplace plugin is retired: the ZASENJC dsh-plugin-store bundle
+	// (installed by the user into the profile) replaces it.
 ];
 
 const PLUGINS_ROOT = (() => {
@@ -117,11 +118,22 @@ async function ensureDesktopBundles(profileDir) {
 	}
 	const bundles = manifest.dsh?.profile?.bundles ?? [];
 	const missing = DESKTOP_BUNDLES.filter((bundle) => bundles.indexOf(bundle.id) === -1);
-	if (missing.length === 0) return;
-	const specs = missing.map((bundle) => join(PLUGINS_ROOT, bundle.dir));
-	const result = await addPlugins(profileDir, specs);
-	if (result.code !== 0) {
-		console.error('[dsh-desktop] desktop bundle install failed:', result.stderr || result.stdout);
+	if (missing.length > 0) {
+		const specs = missing.map((bundle) => join(PLUGINS_ROOT, bundle.dir));
+		const result = await addPlugins(profileDir, specs);
+		if (result.code !== 0) {
+			console.error('[dsh-desktop] desktop bundle install failed:', result.stderr || result.stdout);
+		}
+	}
+	// Prune @dsh-desktop/* bundles that are no longer shipped (the marketplace
+	// was replaced by the ZASENJC plugin store) so they stop composing.
+	try {
+		const after = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'));
+		const stale = (after.dsh?.profile?.bundles ?? [])
+			.filter((name) => name.startsWith('@dsh-desktop/') && !DESKTOP_BUNDLES.some((b) => b.id === name));
+		for (const name of stale) await removePlugin(profileDir, name);
+	} catch {
+		/* ignore */
 	}
 }
 

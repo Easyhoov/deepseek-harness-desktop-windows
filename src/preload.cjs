@@ -273,6 +273,7 @@ window.dshDesktop = {
 		install: (source) => ipcRenderer.invoke('dsh:marketplace-install', { source }),
 		installCancel: () => ipcRenderer.invoke('dsh:marketplace-install-cancel', {}),
 		uninstall: (pkg) => ipcRenderer.invoke('dsh:marketplace-uninstall', { pkg }),
+		verifyNpm: (name) => ipcRenderer.invoke('dsh:marketplace-verify-npm', { name }),
 		installed: () => ipcRenderer.invoke('dsh:marketplace-installed', {}),
 		resolve: (fullName, defaultBranch) => ipcRenderer.invoke('dsh:marketplace-resolve-package', { fullName, defaultBranch }),
 		detail: (fullName, defaultBranch, type, topics) => ipcRenderer.invoke('dsh:marketplace-detail', { fullName, defaultBranch, type, topics }),

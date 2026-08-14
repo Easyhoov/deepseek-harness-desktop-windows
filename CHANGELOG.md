@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.4] — 2026-08-14
+
+### Changed
+
+- **Marketplace replaced by the community plugin store**: the bundled marketplace plugin is retired (no longer shipped or auto-installed). The `dsh-plugin-store` bundle (ZASENJC) now provides the in-app store — install it with `dsh plugin add github:ZASENJC/dsh-plugins-store#path:packages/dsh-plugin-store`, then access it via 设置 → 插件 → 插件商店, the `/store` command, or the session toolbar. Profiles that still have `@dsh-desktop/marketplace` registered are pruned on boot.
+
 ## [0.5.3] — 2026-08-14
 
 ### Fixed

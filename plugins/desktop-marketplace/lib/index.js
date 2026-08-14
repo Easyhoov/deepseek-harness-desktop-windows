@@ -431,6 +431,24 @@ export function apply(ctx) {
 		return { ok: true };
 	});
 
+	// npm-search results bypass the GitHub resolve path; verify a package is a
+	// real dsh bundle before the user installs a non-plugin (e.g. a CLI tool).
+	const offVerifyNpm = ui.on('dsh:marketplace-verify-npm', async ({ name } = {}) => {
+		if (typeof name !== 'string' || !PKG_NAME_PATTERN.test(name)) return { ok: false, reason: 'invalid package name' };
+		try {
+			const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(10_000) });
+			if (!response.ok) return { ok: false, reason: 'registry unreachable' };
+			const data = await response.json();
+			const latest = data['dist-tags']?.latest;
+			if (typeof latest !== 'string') return { ok: false, reason: 'no published version' };
+			const manifest = data.versions?.[latest];
+			const isBundle = Boolean(manifest?.dsh && manifest.dsh.bundle && typeof manifest.dsh.bundle.patch === 'string');
+			return { ok: true, isBundle, latest, name };
+		} catch {
+			return { ok: false, reason: 'registry unreachable' };
+		}
+	});
+
 	const offUninstall = ui.on('dsh:marketplace-uninstall', async ({ pkg } = {}) => {
 		if (typeof pkg !== 'string' || pkg === '') return { ok: false, reason: 'invalid package' };
 		if (typeof ui.dshPluginRemove !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
@@ -471,6 +489,7 @@ export function apply(ctx) {
 		offDetail();
 		offInstall();
 		offCancel();
+		offVerifyNpm();
 		offUninstall();
 		offInstalled();
 	}, 'desktop-marketplace lifecycle');

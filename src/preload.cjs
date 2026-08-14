@@ -339,6 +339,13 @@ const CHROME_CSS = `
 #${CHROME_BAR_ID} .dch-mi{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:12.5px;
   cursor:pointer;color:var(--dsw-alias-label-primary,#e6ecff)}
 #${CHROME_BAR_ID} .dch-mi:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.09))}
+#${CHROME_BAR_ID} .dch-up{font-size:10.5px;line-height:15px;padding:1px 8px;border-radius:999px;flex:none;
+  color:var(--dsw-alias-label-secondary,#b8c5ea);border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.09));
+  white-space:nowrap;display:inline-flex;align-items:center;-webkit-app-region:drag;
+  font-variant-numeric:tabular-nums}
+#${CHROME_BAR_ID} .dch-upbar{position:absolute;left:0;bottom:0;height:2px;width:0;pointer-events:none;
+  background:color-mix(in srgb,var(--dsw-alias-interactive-bg-hover-solid,#5b7cfa) 90%,transparent);
+  transition:width .25s ease}
 `;
 
 function installChrome() {
@@ -359,6 +366,7 @@ function installChrome() {
 			<img class="dch-icon" src="/favicon.svg" alt="">
 			<span class="dch-title">DeepSeek Harness</span>
 			<span class="dch-badge" id="${CHROME_BAR_ID}-badge"></span>
+			<span class="dch-up" id="${CHROME_BAR_ID}-up" hidden></span>
 		</div>
 		<div class="dch-right">
 			<button class="dch-btn" id="${CHROME_BAR_ID}-menu" title="菜单">⋯</button>
@@ -373,7 +381,8 @@ function installChrome() {
 			<div class="dch-mi" data-act="rollback-dsh">回退 dsh 到内置版</div>
 			<div class="dch-mi" data-act="about">关于</div>
 			<div class="dch-mi" data-act="quit">退出</div>
-		</div>`;
+		</div>
+		<div class="dch-upbar" id="${CHROME_BAR_ID}-upbar"></div>`;
 	document.body.appendChild(bar);
 
 	const byId = (id) => document.getElementById(`${CHROME_BAR_ID}-${id}`);
@@ -409,6 +418,34 @@ function installChrome() {
 	ipcRenderer.on('dsh:chrome-maximized', (_event, isMax) => {
 		const max = byId('max');
 		if (max !== null) max.textContent = isMax ? '❐' : '□';
+	});
+
+	// Update progress: pill in the bar + a 2px progress line along its bottom
+	// edge. Downloading/ready persist; transient states auto-hide.
+	ipcRenderer.on('dsh:update-progress', (_event, data) => {
+		const up = byId('up');
+		const upbar = byId('upbar');
+		if (up === null || upbar === null) return;
+		const phase = data && data.phase ? data.phase : '';
+		const version = data && data.version ? ' v' + data.version : '';
+		const percent = typeof data.percent === 'number' ? data.percent : 0;
+		const persist = phase === 'downloading' || phase === 'ready';
+		let text = '';
+		if (phase === 'checking') text = '正在检查更新…';
+		else if (phase === 'downloading') text = '下载更新' + version + ' ' + percent + '%';
+		else if (phase === 'ready') text = '更新' + version + '已就绪，退出时安装';
+		else if (phase === 'uptodate') text = '已是最新版本';
+		else if (phase === 'error') text = '更新检查失败';
+		else {
+			up.hidden = true;
+			upbar.style.width = '0%';
+			return;
+		}
+		up.textContent = text;
+		up.hidden = false;
+		upbar.style.width = phase === 'downloading' ? percent + '%' : phase === 'ready' ? '100%' : '0%';
+		clearTimeout(installChrome.upTimer);
+		if (!persist) installChrome.upTimer = setTimeout(() => { up.hidden = true; }, 6000);
 	});
 }
 

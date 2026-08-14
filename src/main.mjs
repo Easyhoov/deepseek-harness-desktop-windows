@@ -367,6 +367,18 @@ async function shutdown() {
 	console.log('[dsh-desktop] goodbye');
 }
 
+// Update progress → chrome-bar strip + taskbar progress.
+function pushUpdateProgress(payload) {
+	const target = getWindow();
+	if (target === undefined || target.webContents.isDestroyed()) return;
+	target.webContents.send('dsh:update-progress', payload);
+	if (payload?.phase === 'downloading' && typeof payload.percent === 'number') {
+		target.setProgressBar(payload.percent / 100);
+	} else if (payload?.phase === 'ready' || payload?.phase === 'error' || payload?.phase === 'uptodate') {
+		target.setProgressBar(-1);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // custom window chrome: IPC handlers for the injected title bar.
 // ---------------------------------------------------------------------------
@@ -422,7 +434,7 @@ function installChromeIpc() {
 					type: 'info',
 					title: APP_NAME,
 					message: `发现新版本 ${result.found}`,
-					detail: '正在后台下载，下载完成后会通过系统通知提醒你，退出应用时自动安装。',
+					detail: '正在后台下载，窗口顶部会显示下载进度；下载完成后退出应用即自动安装。',
 					buttons: ['确定'],
 					noLink: true,
 				});
@@ -582,7 +594,7 @@ async function run() {
 	bridge = installIpcBridge({ ctx, webServer, getWindow, ipcMain, logLine });
 	registerDesktopSurface();
 	notifications = installNotifications({ ctx, getWindow, logLine });
-	updater = installUpdater({ app, notify: notifications?.notify, logLine });
+	updater = installUpdater({ app, notify: notifications?.notify, logLine, onProgress: pushUpdateProgress });
 	updater?.checkSoon?.();
 
 	if (SCHEME === 'app') {
@@ -684,7 +696,25 @@ if (!gotLock) {
 		if (quitting) return;
 		event.preventDefault();
 		quitting = true;
+		// An update is downloaded: shut the host down, then hand over to the
+		// installer (visible UI, relaunch afterwards) before the process exits.
+		const pendingUpdater = updater;
+		const pending = pendingUpdater?.consumeDownloaded?.() ?? null;
 		shutdown().finally(() => {
+			if (pending !== null) {
+				try {
+					pendingUpdater.installNow();
+					// installNow quits the app itself on success (setImmediate →
+					// app.quit). If the handover did not quit (missing installer
+					// file), exit anyway so the app never hangs half-shut-down.
+					setTimeout(() => {
+						app.exit(app.exitCode ?? 0);
+					}, 3000);
+					return;
+				} catch (error) {
+					logLine(`update install handover failed: ${String(error)}`);
+				}
+			}
 			app.exit(app.exitCode ?? 0);
 		});
 	});

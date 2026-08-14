@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.6] — 2026-08-14
+
+### Added
+
+- **Update progress is now visible end to end**: downloading shows a progress pill and a live 2px bar in the window chrome (plus a taskbar progress indicator); when the download finishes the pill switches to "更新已就绪，退出时安装"; transient states (checking / up to date / failure) appear briefly and auto-hide.
+- **Visible installer during the install phase**: quitting with a downloaded update now hands over to the installer with its own progress UI instead of a silent `/S` run, and the app relaunches when it finishes.
+
 ## [0.4.5] — 2026-08-14
 
 ### Changed

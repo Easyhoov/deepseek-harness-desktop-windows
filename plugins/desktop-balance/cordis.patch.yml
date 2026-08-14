@@ -1,0 +1,3 @@
+- insert:
+    - id: ui-desktop-balance
+      name: '@dsh-desktop/balance'

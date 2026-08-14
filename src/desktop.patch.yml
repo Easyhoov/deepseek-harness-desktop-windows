@@ -1,0 +1,30 @@
+# Desktop carrier overlay — HTTP out, IPC in.
+# Applied after the profile user layer and every bundle layer. Only carrier
+# rows live here: the desktop plugins themselves are dsh bundles whose own
+# cordis.patch.yml declares their rows (composed via dsh.profile.bundles).
+
+# No HTTP listener: the desktop carrier owns the transport.
+- id: webserver
+  disabled: true
+
+# No URL line and no web-surface prompt: the desktop carrier prints and
+# registers its own surface context.
+- id: web-runtime
+  config:
+    printUrl: false
+    surfaceContext: false
+    trustedHosts: []
+
+# Idle dev-only reload chain; without a rebuild watcher it only polls.
+- id: client-hmr
+  disabled: true
+
+# The native directory chooser's client-side flow occupant keeps the row in the
+# boot graph; the desktop carrier provides the `directoryPicker` service itself
+# (Electron's native dialog) in the boot prepare hook.
+- id: directory-picker
+  disabled: true
+
+- insert:
+    - id: ui-directory-picker-native
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-native'

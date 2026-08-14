@@ -12,10 +12,11 @@
  *
  * @module dsh-desktop/boot
  */
-import { writeFileSync, mkdirSync, readdirSync, readFileSync, copyFileSync, statSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import {
 	boot,
 	composeEntries,
@@ -28,6 +29,7 @@ import {
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline';
+import { runDshPlugin } from './dsh-runner.mjs';
 
 /** This app's install anchor: the dsh CLI package.json inside our node_modules. */
 export const INSTALL_ANCHOR = (() => {
@@ -58,49 +60,36 @@ const PROFILE_ROOT_CONFIG = `# dsh profile root — an empty entry list. The tre
 []
 `;
 
-/** The desktop overlay: HTTP out, IPC in. Applied after the profile user layer. */
-const DESKTOP_PATCHES = [
-	// No HTTP listener: the desktop carrier owns the transport.
-	{ id: 'webserver', disabled: true },
-	// No URL line and no web-surface prompt: the desktop carrier prints and
-	// registers its own surface context.
-	{
-		id: 'web-runtime',
-		config: {
-			printUrl: false,
-			surfaceContext: false,
-			trustedHosts: [],
-		},
-	},
-	// Idle dev-only reload chain; without a rebuild watcher it only polls.
-	{ id: 'client-hmr', disabled: true },
-	// The -auto chooser's native backend drives IFileOpenDialog through a
-	// spawned koffi child process, which cannot run under Electron. The
-	// desktop carrier provides `directoryPicker` itself (Electron's native
-	// dialog); this row keeps the CLIENT-side flow occupant (a pure UI
-	// plugin with an empty host apply) in the boot graph.
-	{ id: 'directory-picker', disabled: true },
-	{
-		insert: [
-			{
-				id: 'ui-directory-picker-native',
-				name: '@deepseek-ai/dsh-client-ui-directory-picker-native',
-			},
-			{
-				id: 'ui-desktop-balance',
-				name: '@dsh-desktop/balance',
-			},
-			{
-				id: 'ui-desktop-file-changes',
-				name: '@dsh-desktop/file-changes',
-			},
-			{
-				id: 'ui-desktop-marketplace',
-				name: '@dsh-desktop/marketplace',
-			},
-		],
-	},
+/**
+ * The desktop carrier overlay, as a declarative patch layer (same format as a
+ * profile's cordis.patch.yml / a bundle patch). Only carrier rows live here;
+ * the desktop plugins are bundles whose own cordis.patch.yml declares their
+ * rows.
+ */
+const DESKTOP_PATCH_PATH = join(dirname(fileURLToPath(import.meta.url)), 'desktop.patch.yml');
+const DESKTOP_PATCHES = parseYaml(readFileSync(DESKTOP_PATCH_PATH, 'utf8'));
+
+/**
+ * Shipped desktop bundles, materialized into the profile via the official
+ * `dsh plugin add <path>` mechanism and registered by their `dsh.bundle`
+ * manifest. The plugin sources ship as real files (asar-unpacked), so pnpm
+ * links them directly.
+ */
+const DESKTOP_BUNDLES = [
+	{ id: '@dsh-desktop/balance', dir: 'desktop-balance' },
+	{ id: '@dsh-desktop/file-changes', dir: 'desktop-file-changes' },
+	{ id: '@dsh-desktop/marketplace', dir: 'desktop-marketplace' },
 ];
+
+const PLUGINS_ROOT = (() => {
+	const base = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
+	const marker = `${sep}app.asar${sep}`;
+	const unpackedMarker = `${sep}app.asar.unpacked${sep}`;
+	if (base.includes(marker) && !base.includes(unpackedMarker)) {
+		return base.replace(marker, unpackedMarker);
+	}
+	return base;
+})();
 
 function homePatchPath() {
 	return join(resolveDshHome(), PROFILE_PATCH_FILENAME);
@@ -113,38 +102,26 @@ function resolveTelemetryPatch(disabledEnv, hasRow) {
 }
 
 /**
- * Copy the desktop's own plugin packages into the profile's node_modules so
- * the Loader resolves the overlay rows from the profile baseUrl. Recursive
- * copy through Electron's patched fs (reads asar directories fine).
+ * Install the shipped desktop bundles into the profile with `dsh plugin add
+ * <path>` (pnpm link + bundle registration) so their cordis.patch.yml layers
+ * compose through dsh.profile.bundles like any other plugin. Idempotent: skips
+ * bundles already present in the profile manifest, so steady-state boots never
+ * spawn pnpm.
  */
-function installDesktopPlugins(profileDir) {
-	const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
-	let root;
+async function ensureDesktopBundles(profileDir) {
+	let manifest;
 	try {
-		root = readdirSync(sourceRoot);
+		manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'));
 	} catch {
-		return; // no bundled plugins
+		manifest = {};
 	}
-	const copyDir = (from, to) => {
-		mkdirSync(to, { recursive: true });
-		for (const entry of readdirSync(from)) {
-			const fromPath = join(from, entry);
-			const toPath = join(to, entry);
-			if (statSync(fromPath).isDirectory()) copyDir(fromPath, toPath);
-			else copyFileSync(fromPath, toPath);
-		}
-	};
-	for (const plugin of root) {
-		const source = join(sourceRoot, plugin);
-		try {
-			if (!statSync(source).isDirectory()) continue;
-			const manifestPath = join(source, 'package.json');
-			const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-			const packageName = typeof manifest.name === 'string' ? manifest.name : plugin;
-			copyDir(source, join(profileDir, 'node_modules', ...packageName.split('/')));
-		} catch {
-			/* skip unreadable entry */
-		}
+	const bundles = manifest.dsh?.profile?.bundles ?? [];
+	const missing = DESKTOP_BUNDLES.filter((bundle) => bundles.indexOf(bundle.id) === -1);
+	if (missing.length === 0) return;
+	const specs = missing.map((bundle) => join(PLUGINS_ROOT, bundle.dir));
+	const result = await runDshPlugin(['add', ...specs]);
+	if (result.code !== 0) {
+		console.error('[dsh-desktop] desktop bundle install failed:', result.stderr || result.stdout);
 	}
 }
 
@@ -165,9 +142,13 @@ export async function bootDesktop({ webServer, directoryPicker, desktopUi, overl
 		? overlayAnchor
 		: INSTALL_ANCHOR;
 	healProfilesModuleFallback(anchor);
+	// First load initializes the profile manifest (and heals junctions); then
+	// the shipped desktop bundles are installed via `dsh plugin add`, and the
+	// profile is re-read so their cordis.patch.yml layers enter the composition.
+	const bootProfile = loadProfile(NAME, 'web', anchor, undefined, { userLayer: true });
+	writeFileSync(join(bootProfile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG);
+	await ensureDesktopBundles(bootProfile.dir);
 	const profile = loadProfile(NAME, 'web', anchor, undefined, { userLayer: true });
-	writeFileSync(join(profile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG);
-	installDesktopPlugins(profile.dir);
 	if (desktopUi !== undefined) {
 		desktopUi.profileDir = profile.dir;
 		desktopUi.dshAnchor = anchor;

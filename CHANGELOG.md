@@ -4,6 +4,15 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.0] — 2026-08-14
+
+### Changed
+
+- **"Everything is a plugin" refactor**:
+  - The desktop overlay is now a declarative `src/desktop.patch.yml` patch layer (the same format as a profile/bundle `cordis.patch.yml`), parsed at boot; only carrier-level rows (webserver/web-runtime/client-hmr/directory-picker) remain there.
+  - The three desktop plugins (balance / file-changes / marketplace) are now proper dsh bundles — each declares `dsh.bundle` plus a `cordis.patch.yml` — installed into the `web` profile through the official `dsh plugin add <path>` (pnpm link + bundle registration) instead of a manual file copy and hardcoded rows. Their rows compose via `dsh.profile.bundles`.
+- **Marketplace install risk confirmation**: installing now requires explicit confirmation (third-party code runs inside the DSH process; a restart applies the bundle), matching the official plugin store's gate.
+
 ## [0.4.8] — 2026-08-14
 
 ### Added

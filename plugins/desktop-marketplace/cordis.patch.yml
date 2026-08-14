@@ -1,0 +1,3 @@
+- insert:
+    - id: ui-desktop-marketplace
+      name: '@dsh-desktop/marketplace'

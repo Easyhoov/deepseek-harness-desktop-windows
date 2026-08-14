@@ -1,0 +1,3 @@
+- insert:
+    - id: ui-desktop-file-changes
+      name: '@dsh-desktop/file-changes'

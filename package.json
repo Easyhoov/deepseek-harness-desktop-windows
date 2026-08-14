@@ -46,7 +46,8 @@
     "npmRebuild": false,
     "buildDependenciesFromSource": false,
     "asarUnpack": [
-      "node_modules/**"
+      "node_modules/**",
+      "plugins/**"
     ],
     "files": [
       "src/**",

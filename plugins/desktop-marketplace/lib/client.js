@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
 		};
 
 		var store = {
-			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set(), detail: null, detailData: null, detailBusy: false },
+			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set(), detail: null, detailData: null, detailBusy: false, confirm: null },
 			listeners: new Set(),
 			getSnapshot() { return store.state; },
 			subscribe(listener) {
@@ -75,7 +75,14 @@ window.__ModuleLoader__.load({
 
 		function installBySource(source) {
 			if (bridge === null) return;
-			store.patch({ busy: true, note: "安装中…" });
+			// Risk confirmation first: third-party code runs inside the DSH
+			// process; the user must explicitly accept before the host runs
+			// `dsh plugin add` (same gate the official plugin store enforces).
+			store.patch({ confirm: source });
+		}
+
+		function doInstall(source) {
+			store.patch({ busy: true, confirm: null, note: "安装中…" });
 			void Promise.resolve(bridge.install(source)).then((result) => {
 				store.patch({ busy: false, note: result && result.ok ? result.note : "安装失败：" + (result && result.reason) });
 				refreshInstalled();
@@ -580,6 +587,52 @@ window.__ModuleLoader__.load({
 						createElement(MarketplaceBody))));
 		}
 
+		// ---- install risk confirmation ---------------------------------------
+		var CONFIRM_OVERLAY_STYLE = {
+			zIndex: 1300,
+			justifyContent: "center",
+			alignItems: "center",
+			display: "flex",
+			position: "fixed",
+			inset: "0",
+			pointerEvents: "auto",
+		};
+		var CONFIRM_MASK_STYLE = {
+			background: "var(--dsw-alias-bg-mask-1, rgba(5,8,18,.55))",
+			backdropFilter: "var(--dsw-mask-blur, blur(4px))",
+			position: "absolute",
+			inset: "0",
+		};
+		var CONFIRM_PANEL_STYLE = {
+			zIndex: 1,
+			background: "var(--dsw-alias-bg-layer-2, #101828)",
+			width: "min(420px, 92vw)",
+			boxSizing: "border-box",
+			padding: "18px",
+			borderRadius: "16px",
+			border: "1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.1))",
+			boxShadow: "var(--dsw-shadow-lv3, 0 18px 60px rgba(0,0,0,.55))",
+			display: "flex",
+			flexDirection: "column",
+			gap: "10px",
+			color: "var(--dsw-alias-label-primary, #e6ecff)",
+		};
+
+		function InstallConfirmDialog() {
+			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			var source = s.confirm;
+			if (source === null) return null;
+			return createElement("div", { style: CONFIRM_OVERLAY_STYLE },
+				createElement("div", { style: CONFIRM_MASK_STYLE, onClick: () => store.patch({ confirm: null }) }),
+				createElement("div", { style: CONFIRM_PANEL_STYLE, role: "dialog", "aria-modal": "true" },
+					createElement("div", { style: { fontSize: "14px", fontWeight: 600 } }, "安装第三方插件"),
+					createElement("div", { style: { fontSize: "12px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary, #b8c5ea)", wordBreak: "break-all" } },
+						"即将安装 " + source + "。第三方插件会在 DeepSeek Harness 进程权限范围内运行，请先审阅仓库来源与代码；安装完成后需重启应用生效。"),
+					createElement("div", { style: { display: "flex", gap: "8px", justifyContent: "flex-end" } },
+						createElement("button", { type: "button", style: ACT_STYLE, onClick: () => store.patch({ confirm: null }) }, "取消"),
+						createElement("button", { type: "button", style: { ...ACT_STYLE, borderColor: "var(--dsw-alias-state-error-primary, #e81123)", color: "var(--dsw-alias-state-error-primary, #ff8a8a)" }, onClick: () => doInstall(source) }, "确认安装"))));
+		}
+
 		// ---- opener -----------------------------------------------------------
 		// Preferred route: click the built-in 设置 trigger, then select the
 		// marketplace section in its nav rail — the panel then IS the settings
@@ -650,6 +703,13 @@ window.__ModuleLoader__.load({
 				label: "插件市场",
 				inject: () => ({}),
 			}, MarketplacePanel));
+			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+				name: "shell.overlay",
+				id: "marketplace-install-confirm",
+				order: 30,
+				label: "安装确认",
+				inject: () => ({}),
+			}, InstallConfirmDialog));
 			console.log("[dsh-desktop] marketplace mounted (settings-native)");
 		}
 

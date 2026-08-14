@@ -12,9 +12,10 @@
  *
  * @module dsh-desktop/boot
  */
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readdirSync, readFileSync, copyFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
 	boot,
 	composeEntries,
@@ -85,6 +86,10 @@ const DESKTOP_PATCHES = [
 				id: 'ui-directory-picker-native',
 				name: '@deepseek-ai/dsh-client-ui-directory-picker-native',
 			},
+			{
+				id: 'ui-desktop-balance',
+				name: '@dsh-desktop/balance',
+			},
 		],
 	},
 ];
@@ -100,6 +105,42 @@ function resolveTelemetryPatch(disabledEnv, hasRow) {
 }
 
 /**
+ * Copy the desktop's own plugin packages into the profile's node_modules so
+ * the Loader resolves the overlay rows from the profile baseUrl. Recursive
+ * copy through Electron's patched fs (reads asar directories fine).
+ */
+function installDesktopPlugins(profileDir) {
+	const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
+	let root;
+	try {
+		root = readdirSync(sourceRoot);
+	} catch {
+		return; // no bundled plugins
+	}
+	const copyDir = (from, to) => {
+		mkdirSync(to, { recursive: true });
+		for (const entry of readdirSync(from)) {
+			const fromPath = join(from, entry);
+			const toPath = join(to, entry);
+			if (statSync(fromPath).isDirectory()) copyDir(fromPath, toPath);
+			else copyFileSync(fromPath, toPath);
+		}
+	};
+	for (const plugin of root) {
+		const source = join(sourceRoot, plugin);
+		try {
+			if (!statSync(source).isDirectory()) continue;
+			const manifestPath = join(source, 'package.json');
+			const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+			const packageName = typeof manifest.name === 'string' ? manifest.name : plugin;
+			copyDir(source, join(profileDir, 'node_modules', ...packageName.split('/')));
+		} catch {
+			/* skip unreadable entry */
+		}
+	}
+}
+
+/**
  * Boot the shipped web profile in-process with the desktop overlay.
  * @param {object} options
  * @param {object} options.webServer - the in-process webServer stub provided in prepare.
@@ -107,10 +148,11 @@ function resolveTelemetryPatch(disabledEnv, hasRow) {
  * @param {(code: number) => void} options.onExit - app exit requested by a booted app.
  * @returns {Promise<import('@deepseek-ai/cordis').Context>} the settled root context.
  */
-export async function bootDesktop({ webServer, directoryPicker, onExit }) {
+export async function bootDesktop({ webServer, directoryPicker, desktopUi, onExit }) {
 	healProfilesModuleFallback(INSTALL_ANCHOR);
 	const profile = loadProfile(NAME, 'web', INSTALL_ANCHOR, undefined, { userLayer: true });
 	writeFileSync(join(profile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG);
+	installDesktopPlugins(profile.dir);
 
 	const homePatches = loadOptionalPatches(NAME, homePatchPath()) ?? [];
 	const bundlePatches = profile.layers.flatMap((layer) => layer.patches);
@@ -141,6 +183,7 @@ export async function bootDesktop({ webServer, directoryPicker, onExit }) {
 		provideCmdline(hostCtx, { args: [], exit: (code) => void onExit(code) });
 		hostCtx.provide('webServer', webServer);
 		hostCtx.provide('directoryPicker', directoryPicker);
+		hostCtx.provide('desktopUi', desktopUi);
 	}).catch((error) => {
 		// The Loader aggregates per-entry failures; surface every one.
 		const walk = (err, depth) => {

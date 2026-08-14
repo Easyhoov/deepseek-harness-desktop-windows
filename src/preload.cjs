@@ -251,3 +251,142 @@ IpcWebSocket.CLOSED = WS_CLOSED;
 window.fetch = ipcFetch;
 window.WebSocket = IpcWebSocket;
 window.__DSH_DESKTOP__ = true;
+
+// ---------------------------------------------------------------------------
+// dshDesktop bridge: small capability surface for page plugins (main world —
+// direct assignment, no contextBridge needed).
+// ---------------------------------------------------------------------------
+window.dshDesktop = {
+	appVersion: '',
+	windowControls: {
+		minimize: () => ipcRenderer.invoke('dsh:chrome-window', { action: 'minimize' }),
+		toggleMaximize: () => ipcRenderer.invoke('dsh:chrome-window', { action: 'toggle-maximize' }),
+		close: () => ipcRenderer.invoke('dsh:chrome-window', { action: 'close' }),
+		isMaximized: () => ipcRenderer.invoke('dsh:chrome-window', { action: 'is-maximized' }),
+	},
+	menu: {
+		action: (action, payload) => ipcRenderer.invoke('dsh:chrome-menu', { action, ...(payload ?? {}) }),
+	},
+	openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
+};
+
+// Balance pushes from the host plugin → window event for the client widget.
+ipcRenderer.on('dsh:balance', (_event, data) => {
+	try {
+		window.dispatchEvent(new CustomEvent('dsh-balance-changed', { detail: data }));
+	} catch {
+		/* best effort */
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Custom window chrome: frameless glass title bar (36px) injected into the
+// page, themed by the DSH UI's own CSS variables.
+// ---------------------------------------------------------------------------
+const CHROME_BAR_ID = '__dsh_desktop_chrome__';
+const CHROME_BAR_HEIGHT = 36;
+const CHROME_CSS = `
+#${CHROME_BAR_ID}{position:fixed;top:0;left:0;right:0;height:${CHROME_BAR_HEIGHT}px;z-index:2147483000;
+  display:flex;align-items:center;justify-content:space-between;padding:0 6px 0 10px;
+  -webkit-app-region:drag;user-select:none;box-sizing:border-box;
+  font-family:var(--dsw-font-family,"Segoe UI","Microsoft YaHei",system-ui,sans-serif);
+  background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b1220) 74%,transparent);
+  backdrop-filter:blur(16px) saturate(1.5);-webkit-backdrop-filter:blur(16px) saturate(1.5);
+  border-bottom:1px solid color-mix(in srgb,var(--dsw-alias-border-l1,rgba(255,255,255,.09)) 55%,transparent)}
+#${CHROME_BAR_ID} .dch-left{display:flex;align-items:center;gap:8px;min-width:0;-webkit-app-region:drag}
+#${CHROME_BAR_ID} .dch-icon{width:20px;height:20px;border-radius:6px;display:block;flex:none;-webkit-app-region:drag}
+#${CHROME_BAR_ID} .dch-title{font-size:12.5px;font-weight:600;letter-spacing:.2px;line-height:16px;
+  color:var(--dsw-alias-label-primary,#e6ecff);white-space:nowrap;-webkit-app-region:drag}
+#${CHROME_BAR_ID} .dch-badge{font-size:10px;line-height:14px;padding:1px 6px;border-radius:999px;
+  color:var(--dsw-alias-label-tertiary,#93a5d8);border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.09));
+  white-space:nowrap;-webkit-app-region:drag;font-family:var(--ds-font-family-code,Consolas,monospace)}
+#${CHROME_BAR_ID} .dch-right{display:flex;align-items:center;gap:2px;-webkit-app-region:no-drag}
+#${CHROME_BAR_ID} .dch-btn{width:30px;height:28px;display:grid;place-items:center;border:none;border-radius:8px;
+  background:transparent;color:var(--dsw-alias-label-secondary,#b8c5ea);cursor:pointer;padding:0;font-size:13px;line-height:1;
+  -webkit-app-region:no-drag;outline:none;transition:background .12s,color .12s}
+#${CHROME_BAR_ID} .dch-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.09));
+  color:var(--dsw-alias-label-primary,#eef2ff)}
+#${CHROME_BAR_ID} .dch-close:hover{background:#e81123;color:#fff}
+#${CHROME_BAR_ID} .dch-menu{position:fixed;top:${CHROME_BAR_HEIGHT + 8}px;right:8px;width:248px;z-index:2147483001;
+  -webkit-app-region:no-drag;box-sizing:border-box;padding:6px;display:none;
+  background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#0b1220) 92%,white));
+  border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1));border-radius:12px;
+  box-shadow:0 12px 40px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35);
+  backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);
+  color:var(--dsw-alias-label-primary,#e6ecff);font-family:var(--dsw-font-family,"Segoe UI","Microsoft YaHei",system-ui,sans-serif)}
+#${CHROME_BAR_ID} .dch-menu.open{display:block}
+#${CHROME_BAR_ID} .dch-mi{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:12.5px;
+  cursor:pointer;color:var(--dsw-alias-label-primary,#e6ecff)}
+#${CHROME_BAR_ID} .dch-mi:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.09))}
+`;
+
+function installChrome() {
+	if (document.getElementById(CHROME_BAR_ID) !== null) return;
+	const style = document.createElement('style');
+	style.textContent = CHROME_CSS;
+	(document.head ?? document.documentElement).appendChild(style);
+
+	// Push the app body below the bar; the shell keeps its 100% height.
+	const layout = document.createElement('style');
+	layout.textContent = `html,body{height:100%}body{margin:0;padding-top:${CHROME_BAR_HEIGHT}px !important;box-sizing:border-box}`;
+	(document.head ?? document.documentElement).appendChild(layout);
+
+	const bar = document.createElement('div');
+	bar.id = CHROME_BAR_ID;
+	bar.innerHTML = `
+		<div class="dch-left">
+			<img class="dch-icon" src="/favicon.svg" alt="">
+			<span class="dch-title">DeepSeek Harness</span>
+			<span class="dch-badge" id="${CHROME_BAR_ID}-badge"></span>
+		</div>
+		<div class="dch-right">
+			<button class="dch-btn" id="${CHROME_BAR_ID}-menu" title="菜单">⋯</button>
+			<button class="dch-btn" id="${CHROME_BAR_ID}-min" title="最小化">─</button>
+			<button class="dch-btn" id="${CHROME_BAR_ID}-max" title="最大化/还原">□</button>
+			<button class="dch-btn dch-close" id="${CHROME_BAR_ID}-close" title="关闭（隐藏到托盘）">✕</button>
+		</div>
+		<div class="dch-menu" id="${CHROME_BAR_ID}-menu-panel">
+			<div class="dch-mi" data-act="check-updates">检查更新</div>
+			<div class="dch-mi" data-act="about">关于</div>
+			<div class="dch-mi" data-act="quit">退出</div>
+		</div>`;
+	document.body.appendChild(bar);
+
+	const byId = (id) => document.getElementById(`${CHROME_BAR_ID}-${id}`);
+	const menuPanel = byId('menu-panel');
+	const closeMenu = () => menuPanel.classList.remove('open');
+	byId('menu').addEventListener('click', (event) => {
+		event.stopPropagation();
+		menuPanel.classList.toggle('open');
+	});
+	byId('min').addEventListener('click', () => void window.dshDesktop.windowControls.minimize());
+	byId('max').addEventListener('click', () => void window.dshDesktop.windowControls.toggleMaximize());
+	byId('close').addEventListener('click', () => void window.dshDesktop.windowControls.close());
+	menuPanel.addEventListener('click', (event) => {
+		const item = event.target.closest('.dch-mi');
+		if (item === null) return;
+		closeMenu();
+		void window.dshDesktop.menu.action(item.dataset.act);
+	});
+	window.addEventListener('click', closeMenu);
+
+	// Version badge + maximize glyph.
+	void ipcRenderer.invoke('dsh:chrome-init').then((info) => {
+		if (info !== null && info !== undefined) {
+			const badge = byId('badge');
+			if (badge !== null) badge.textContent = `v${info.appVersion}`;
+			window.dshDesktop.appVersion = info.appVersion;
+		}
+	});
+	ipcRenderer.on('dsh:chrome-maximized', (_event, isMax) => {
+		const max = byId('max');
+		if (max !== null) max.textContent = isMax ? '❐' : '□';
+	});
+}
+
+function ready(fn) {
+	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, { once: true });
+	else fn();
+}
+
+ready(installChrome);

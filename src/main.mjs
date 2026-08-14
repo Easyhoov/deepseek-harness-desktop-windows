@@ -87,6 +87,7 @@ if (SCHEME === 'app') {
 const DESKTOP_SURFACE_TEXT = `You are interacting with the user through the DeepSeek Harness desktop application (an Electron shell). The host composition runs in-process inside the Electron main process: the built frontend loads from the local file system (a dist copy, not a server), every /api request and event downlink crosses an Electron IPC bridge instead of HTTP, and there is no browser, no listening port, and no local HTTP server. The window can be hidden to the system tray while sessions keep running, and native notifications announce approvals, questions, errors, and finished replies. When the user refers to "this app", "this window", or "this GUI" without naming another target, they mean this desktop GUI. UI changes require rebuilding and restarting the desktop app; never promise hot reloads. Do not start replacement servers — the desktop carrier owns the transport.`;
 
 let win = null;
+let splash = null;
 let ctx = null;
 let bridge = null;
 let notifications = null;
@@ -101,6 +102,16 @@ let crashStrikes = 0;
 
 const getWindow = () => (win !== null && !win.isDestroyed() ? win : undefined);
 
+/** The desktop carrier's renderer push channel, injected into the host tree
+ * as the `desktopUi` service (desktop plugins read it with ctx.get). */
+const desktopUi = {
+	send(channel, payload) {
+		const target = getWindow();
+		if (target === undefined || target.webContents.isDestroyed()) return;
+		target.webContents.send(channel, payload);
+	},
+};
+
 function showWindow() {
 	const target = getWindow();
 	if (target === undefined) return;
@@ -112,6 +123,48 @@ function showWindow() {
 function quitApp(code = 0) {
 	app.exitCode = code;
 	app.quit();
+}
+
+// ---------------------------------------------------------------------------
+// startup splash: a small frameless window shown while the host boots.
+// ---------------------------------------------------------------------------
+function createSplash() {
+	try {
+		const icon = readFile(join(app.getAppPath(), 'assets', 'icon.png')).then((data) => data.toString('base64'));
+		const html = (iconB64) => `<!doctype html><html><head><meta charset="utf-8"><style>
+			html,body{height:100%;margin:0}
+			body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+				background:#f6f8fc;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:#1a2233}
+			img{width:64px;height:64px;border-radius:16px;animation:pulse 1.6s ease-in-out infinite}
+			.spinner{width:18px;height:18px;border:2px solid #d5dbe8;border-top-color:#1a2233;border-radius:50%;animation:spin .8s linear infinite}
+			.t{font-size:13px;font-weight:600;letter-spacing:.3px}
+			@keyframes spin{to{transform:rotate(360deg)}}
+			@keyframes pulse{0%,100%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.04)}}
+			</style></head><body><img src="data:image/png;base64,${iconB64}"><div class="spinner"></div><div class="t">DeepSeek Harness 启动中…</div></body></html>`;
+		splash = new BrowserWindow({
+			width: 340,
+			height: 220,
+			frame: false,
+			transparent: true,
+			resizable: false,
+			alwaysOnTop: true,
+			skipTaskbar: true,
+			show: true,
+		});
+		void icon.then((b64) => splash?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html(b64))}`));
+	} catch (error) {
+		logLine(`splash failed: ${String(error)}`);
+	}
+}
+
+function destroySplash() {
+	if (splash === null) return;
+	try {
+		splash.destroy();
+	} catch {
+		/* already gone */
+	}
+	splash = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,8 +219,8 @@ function createWindow() {
 		minWidth: 960,
 		minHeight: 640,
 		show: false,
+		frame: false,
 		title: APP_NAME,
-		autoHideMenuBar: true,
 		backgroundColor: '#101014',
 		icon: join(app.getAppPath(), 'assets', 'icon.png'),
 		webPreferences: {
@@ -188,7 +241,16 @@ function createWindow() {
 		created.hide();
 	});
 
-	created.once('ready-to-show', () => created.show());
+	created.once('ready-to-show', () => {
+		destroySplash();
+		created.show();
+	});
+	// Custom-chrome maximize state → the injected title bar swaps its glyph.
+	const sendMaximized = (isMaximized) => {
+		if (!created.webContents.isDestroyed()) created.webContents.send('dsh:chrome-maximized', isMaximized);
+	};
+	created.on('maximize', () => sendMaximized(true));
+	created.on('unmaximize', () => sendMaximized(false));
 	created.webContents.on('console-message', (event) => {
 		const { level, message } = event;
 		console.log(`[renderer:${level}] ${message}`);
@@ -256,6 +318,7 @@ async function shutdown() {
 		notifications = null;
 		updater?.dispose();
 		updater = null;
+		destroySplash();
 		if (bridge !== null) bridge.dispose();
 		bridge = null;
 		tray?.destroy();
@@ -266,6 +329,81 @@ async function shutdown() {
 		console.error('[dsh-desktop] dispose failed:', error);
 	}
 	console.log('[dsh-desktop] goodbye');
+}
+
+// ---------------------------------------------------------------------------
+// custom window chrome: IPC handlers for the injected title bar.
+// ---------------------------------------------------------------------------
+function installChromeIpc() {
+	const trusted = (event) => {
+		const target = getWindow();
+		return target !== undefined && event.sender.id === target.webContents.id;
+	};
+	ipcMain.handle('dsh:chrome-init', (event) => {
+		if (!trusted(event)) return null;
+		return { appName: APP_NAME, appVersion: app.getVersion(), dshVersion: '' };
+	});
+	ipcMain.handle('dsh:chrome-window', (event, { action } = {}) => {
+		if (!trusted(event)) return false;
+		const target = getWindow();
+		if (target === undefined) return false;
+		switch (action) {
+			case 'minimize':
+				target.minimize();
+				return true;
+			case 'toggle-maximize':
+				if (target.isMaximized()) target.unmaximize();
+				else target.maximize();
+				return true;
+			case 'close':
+				target.close();
+				return true;
+			case 'is-maximized':
+				return target.isMaximized();
+			default:
+				return false;
+		}
+	});
+	ipcMain.handle('dsh:chrome-menu', (event, { action } = {}) => {
+		if (!trusted(event)) return null;
+		switch (action) {
+			case 'check-updates':
+				void updater?.check();
+				return true;
+			case 'quit':
+				quitApp(0);
+				return true;
+			case 'about':
+				dialog.showMessageBoxSync(getWindow(), {
+					type: 'info',
+					title: APP_NAME,
+					message: APP_NAME,
+					detail: `版本 ${app.getVersion()}\n非官方 DeepSeek Harness 桌面版（MIT）`,
+					buttons: ['确定'],
+					noLink: true,
+				});
+				return true;
+			default:
+				return false;
+		}
+	});
+	ipcMain.handle('dsh:open-external', (event, { url } = {}) => {
+		if (!trusted(event)) return false;
+		try {
+			const parsed = new URL(String(url));
+			if (parsed.protocol !== 'https:') return false;
+			void shell.openExternal(parsed.toString());
+			return true;
+		} catch {
+			return false;
+		}
+	});
+	return () => {
+		ipcMain.removeHandler('dsh:chrome-init');
+		ipcMain.removeHandler('dsh:chrome-window');
+		ipcMain.removeHandler('dsh:chrome-menu');
+		ipcMain.removeHandler('dsh:open-external');
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +422,7 @@ async function run() {
 		/* keep the inherited cwd */
 	}
 
+	createSplash();
 	console.log(`[dsh-desktop] booting web profile in-process (DSH_HOME=${process.env.DSH_HOME}, scheme=${SCHEME})`);
 	logLine(`booting (DSH_HOME=${process.env.DSH_HOME}, scheme=${SCHEME})`);
 	const webServer = createIpcWebServer();
@@ -310,8 +449,9 @@ async function run() {
 		},
 	};
 
-	ctx = await bootDesktop({ webServer, directoryPicker, onExit: quitApp });
+	ctx = await bootDesktop({ webServer, directoryPicker, desktopUi, onExit: quitApp });
 	logLine('boot ok');
+	installChromeIpc();
 
 	const clientModules = ctx.get('clientModules');
 	if (clientModules === undefined) {

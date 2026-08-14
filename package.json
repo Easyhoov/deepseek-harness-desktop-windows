@@ -30,6 +30,7 @@
     "files": [
       "src/**",
       "assets/**",
+      "plugins/**",
       "package.json"
     ],
     "win": {

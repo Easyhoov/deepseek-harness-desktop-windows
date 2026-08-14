@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.3] — 2026-08-14
+
+### Fixed
+
+- **No black console window during install/uninstall**: the runner previously went through the dsh CLI, whose internal `spawnSync("pnpm", {shell:true})` opened a visible `cmd.exe` window. pnpm is now spawned directly (real arguments, hidden window), and the profile manifest's `dsh.profile.bundles` reconciliation runs in-process — the same contract the dsh CLI applies, minus the console and the shell-quoting fragility.
+
 ## [0.5.2] — 2026-08-14
 
 ### Added

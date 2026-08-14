@@ -29,7 +29,7 @@ import {
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline';
-import { runDshPlugin } from './dsh-runner.mjs';
+import { addPlugins } from './dsh-runner.mjs';
 
 /** This app's install anchor: the dsh CLI package.json inside our node_modules. */
 export const INSTALL_ANCHOR = (() => {
@@ -119,7 +119,7 @@ async function ensureDesktopBundles(profileDir) {
 	const missing = DESKTOP_BUNDLES.filter((bundle) => bundles.indexOf(bundle.id) === -1);
 	if (missing.length === 0) return;
 	const specs = missing.map((bundle) => join(PLUGINS_ROOT, bundle.dir));
-	const result = await runDshPlugin(['add', ...specs]);
+	const result = await addPlugins(profileDir, specs);
 	if (result.code !== 0) {
 		console.error('[dsh-desktop] desktop bundle install failed:', result.stderr || result.stdout);
 	}

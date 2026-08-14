@@ -1,18 +1,28 @@
 /**
- * Self-contained `dsh plugin` runner: invokes the bundled @deepseek-ai/dsh
- * CLI under Electron's own Node (ELECTRON_RUN_AS_NODE=1 on the child env
- * only) against the `web` profile, exactly like `dsh plugin --profile web`.
- * `dsh plugin` forwards to `pnpm`, so we synthesize a `pnpm.cmd` shim into a
- * temp dir and prepend it to the child PATH — the packaged app has no
- * node_modules/.bin shims.
+ * Self-contained pnpm runner for profile plugin management, executed under
+ * Electron's own Node (ELECTRON_RUN_AS_NODE=1 on the child env only).
+ *
+ * Instead of shelling out to `dsh plugin` (whose internal `spawnSync("pnpm",
+ * {shell:true})` opens a visible cmd.exe console), pnpm is spawned directly
+ * with real arguments and a hidden window, then the profile manifest's
+ * `dsh.profile.bundles` is reconciled against the installed state — the same
+ * contract the dsh CLI applies, without the console window or the shell
+ * quoting fragility.
  *
  * @module dsh-desktop/dsh-runner
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
-import { tmpdir } from 'node:os';
+
+function pnpmPath() {
+	// pnpm's exports map points "." at ./package.json and hides the
+	// ./package.json subpath, so resolve('pnpm') yields the package root's
+	// package.json directly; join bin/pnpm.cjs ourselves.
+	const pkgJson = createRequire(import.meta.url).resolve('pnpm');
+	return unpack(join(dirname(pkgJson), 'bin', 'pnpm.cjs'));
+}
 
 // In a packaged app the resolver reports app.asar paths, but node_modules is
 // fully asar-unpacked — the child (ELECTRON_RUN_AS_NODE) reads real files, so
@@ -24,51 +34,22 @@ function unpack(p) {
 	return p;
 }
 
-function dshBinPath() {
-	const pkgJson = createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json');
-	return unpack(join(dirname(pkgJson), 'lib', 'bin.js'));
-}
-
-function pnpmCjsPath() {
-	// pnpm's exports map points "." at ./package.json and hides the
-	// ./package.json subpath, so resolve('pnpm') yields the package root's
-	// package.json directly; join bin/pnpm.cjs ourselves.
-	const pkgJson = createRequire(import.meta.url).resolve('pnpm');
-	return unpack(join(dirname(pkgJson), 'bin', 'pnpm.cjs'));
-}
-
-let shimDir = null;
-function ensurePnpmShim() {
-	if (shimDir !== null) return shimDir;
-	const dir = join(tmpdir(), 'dsh-desktop-pnpm-shim');
-	mkdirSync(dir, { recursive: true });
-	// ELECTRON_RUN_AS_NODE is inherited from the child env, so this electron
-	// invocation behaves as plain node.
-	writeFileSync(join(dir, 'pnpm.cmd'), `@echo off\r\n"${process.execPath}" "${pnpmCjsPath()}" %*\r\n`, 'utf8');
-	shimDir = dir;
-	return dir;
-}
-
 /**
- * Start `dsh plugin --profile web <args...>` as a cancellable task.
- * @param {object} [opts] - logLine, onOutput(chunk, stream), timeoutMs.
+ * Start one pnpm invocation as a cancellable task.
+ * @param {string[]} args - pnpm arguments (add/remove …).
+ * @param {object} [opts] - cwd, logLine, onOutput(chunk), timeoutMs.
  * @returns {{done: Promise<{code:number|null, stdout:string, stderr:string, killed:boolean}>, kill(): void}}
  */
-export function startDshPlugin(args, { logLine, onOutput, timeoutMs } = {}) {
+export function startPnpm(args, { cwd, logLine, onOutput, timeoutMs } = {}) {
 	let child = null;
 	let killed = false;
 	const done = new Promise((resolve) => {
 		let stdout = '';
 		let stderr = '';
 		try {
-			const shim = ensurePnpmShim();
-			const path = `${shim}${process.env.PATH ? ';' + process.env.PATH : ''}`;
-			// `dsh plugin` forwards these args to pnpm through a shell; quote any
-			// spec containing whitespace so paths like "…/DeepSeek Harness
-			// Desktop/…" survive as a single argument.
-			const quotedArgs = args.map((arg) => (/[\s"&|<>^]/.test(String(arg)) ? `"${String(arg)}"` : arg));
-			child = spawn(process.execPath, [dshBinPath(), 'plugin', '--profile', 'web', ...quotedArgs], {
-				env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: path },
+			child = spawn(process.execPath, [pnpmPath(), ...args], {
+				cwd,
+				env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CI: 'true' },
 				windowsHide: true,
 				stdio: ['ignore', 'pipe', 'pipe'],
 			});
@@ -80,20 +61,20 @@ export function startDshPlugin(args, { logLine, onOutput, timeoutMs } = {}) {
 			const text = chunk.toString('utf8');
 			return text.length < 4096 ? text : text.slice(-4096);
 		};
-		const emit = (chunk, stream) => {
+		const emit = (chunk) => {
 			try {
-				onOutput?.(chunk.toString('utf8'), stream);
+				onOutput?.(chunk.toString('utf8'));
 			} catch {
 				/* best effort */
 			}
 		};
 		child.stdout.on('data', (chunk) => {
 			stdout = (stdout + cap(chunk)).slice(-16384);
-			emit(chunk, 'stdout');
+			emit(chunk);
 		});
 		child.stderr.on('data', (chunk) => {
 			stderr = (stderr + cap(chunk)).slice(-16384);
-			emit(chunk, 'stderr');
+			emit(chunk);
 		});
 		const timer = setTimeout(() => {
 			killed = true;
@@ -102,14 +83,14 @@ export function startDshPlugin(args, { logLine, onOutput, timeoutMs } = {}) {
 			} catch {
 				/* already gone */
 			}
-		}, timeoutMs ?? 15 * 60 * 1000); // generous ceiling (git builds can be slow)
+		}, timeoutMs ?? 15 * 60 * 1000);
 		child.on('error', (error) => {
 			clearTimeout(timer);
 			resolve({ code: null, stdout, stderr: String(error?.message ?? error), killed });
 		});
 		child.on('close', (code) => {
 			clearTimeout(timer);
-			logLine?.(`dsh plugin ${args.join(' ').slice(0, 80)} → ${code}${killed ? ' (killed)' : ''}`);
+			logLine?.(`pnpm ${args.join(' ').slice(0, 80)} → ${code}${killed ? ' (killed)' : ''}`);
 			resolve({ code, stdout, stderr, killed });
 		});
 	});
@@ -126,10 +107,87 @@ export function startDshPlugin(args, { logLine, onOutput, timeoutMs } = {}) {
 	};
 }
 
+// ---- profile manifest reconciliation (mirrors the dsh CLI's contract) ----
+
+function readProfileManifest(profileDir) {
+	try {
+		return JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'));
+	} catch {
+		return {};
+	}
+}
+
+function writeProfileManifest(profileDir, manifest) {
+	writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+function bundleDir(profileDir, packageName) {
+	return join(profileDir, 'node_modules', ...packageName.split('/'));
+}
+
+function isBundle(profileDir, packageName) {
+	try {
+		const pkg = JSON.parse(readFileSync(join(bundleDir(profileDir, packageName), 'package.json'), 'utf8'));
+		return Boolean(pkg?.dsh && pkg.dsh.bundle && typeof pkg.dsh.bundle.patch === 'string');
+	} catch {
+		return false;
+	}
+}
+
+/** A dependency resolving to a dsh.bundle package joins the layer stack; a
+ *  dependency-listed name that no longer declares a bundle leaves it.
+ *  `beforeDeps` is the dependency snapshot taken BEFORE the pnpm operation,
+ *  so a removed dependency also leaves the layer list. */
+function reconcilePlugins(profileDir, beforeDeps) {
+	const manifest = readProfileManifest(profileDir);
+	const dependencies = Object.keys(manifest.dependencies ?? {});
+	const bundles = manifest.dsh?.profile?.bundles ?? [];
+	let changed = false;
+	for (const name of dependencies) {
+		if (isBundle(profileDir, name) && !bundles.includes(name)) {
+			bundles.push(name);
+			changed = true;
+		}
+	}
+	for (const name of [...bundles]) {
+		const wasDependency = beforeDeps.has(name) || dependencies.includes(name);
+		const stillBundle = dependencies.includes(name) && isBundle(profileDir, name);
+		if (wasDependency && !stillBundle) {
+			bundles.splice(bundles.indexOf(name), 1);
+			changed = true;
+		}
+	}
+	if (!changed) return;
+	manifest.dsh = {
+		...manifest.dsh,
+		profile: {
+			...manifest.dsh?.profile,
+			bundles,
+		},
+	};
+	writeProfileManifest(profileDir, manifest);
+}
+
 /**
- * Run `dsh plugin --profile web <args...>` to completion.
- * @returns {Promise<{code: number|null, stdout: string, stderr: string}>}
+ * `pnpm add <specs…>` in the profile + bundle reconciliation.
+ * @returns {Promise<{code:number|null, stdout:string, stderr:string, killed:boolean}>}
  */
-export function runDshPlugin(args, opts) {
-	return startDshPlugin(args, opts).done;
+export async function addPlugins(profileDir, specs, opts = {}) {
+	const before = new Set(Object.keys(readProfileManifest(profileDir).dependencies ?? {}));
+	const task = startPnpm(['add', ...specs], { ...opts, cwd: profileDir });
+	const res = await task.done;
+	if (res.code === 0 && !res.killed) reconcilePlugins(profileDir, before);
+	return res;
+}
+
+/**
+ * `pnpm remove <pkg>` in the profile + bundle reconciliation.
+ * @returns {Promise<{code:number|null, stdout:string, stderr:string, killed:boolean}>}
+ */
+export async function removePlugin(profileDir, pkg, opts = {}) {
+	const before = new Set(Object.keys(readProfileManifest(profileDir).dependencies ?? {}));
+	const task = startPnpm(['remove', pkg], { ...opts, cwd: profileDir });
+	const res = await task.done;
+	if (res.code === 0 && !res.killed) reconcilePlugins(profileDir, before);
+	return res;
 }

@@ -13,8 +13,9 @@
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 
 function pnpmPath() {
 	// pnpm's exports map points "." at ./package.json and hides the
@@ -22,6 +23,20 @@ function pnpmPath() {
 	// package.json directly; join bin/pnpm.cjs ourselves.
 	const pkgJson = createRequire(import.meta.url).resolve('pnpm');
 	return unpack(join(dirname(pkgJson), 'bin', 'pnpm.cjs'));
+}
+
+// A pnpm.cmd shim on PATH so nested lifecycle scripts that call `pnpm`
+// (e.g. a git dependency's prepare: `pnpm install`) resolve to the bundled
+// pnpm. The main pnpm invocation stays direct + hidden; only PATH lookup goes
+// through the shim. ELECTRON_RUN_AS_NODE is inherited by the shell children.
+let shimDir = null;
+function ensurePnpmShim() {
+	if (shimDir !== null) return shimDir;
+	const dir = join(tmpdir(), 'dsh-desktop-pnpm-shim');
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, 'pnpm.cmd'), `@echo off\r\n"${process.execPath}" "${pnpmPath()}" %*\r\n`, 'utf8');
+	shimDir = dir;
+	return dir;
 }
 
 // In a packaged app the resolver reports app.asar paths, but node_modules is
@@ -53,9 +68,10 @@ export function startPnpm(args, { cwd, logLine, onOutput, timeoutMs } = {}) {
 		let stdout = '';
 		let stderr = '';
 		try {
+			const path = `${ensurePnpmShim()}${process.env.PATH ? ';' + process.env.PATH : ''}`;
 			child = spawn(process.execPath, [pnpmPath(), ...args], {
 				cwd,
-				env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CI: 'true' },
+				env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CI: 'true', PATH: path },
 				windowsHide: true,
 				stdio: ['ignore', 'pipe', 'pipe'],
 			});

@@ -268,12 +268,26 @@ window.dshDesktop = {
 		action: (action, payload) => ipcRenderer.invoke('dsh:chrome-menu', { action, ...(payload ?? {}) }),
 	},
 	openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
+	fileChanges: {
+		get: (sessionId) => ipcRenderer.invoke('dsh:file-changes-get', { sessionId }),
+		revert: (sessionId, opId) => ipcRenderer.invoke('dsh:file-revert', { sessionId, opId }),
+		revertAll: (sessionId) => ipcRenderer.invoke('dsh:file-revert-all', { sessionId }),
+	},
 };
 
 // Balance pushes from the host plugin → window event for the client widget.
 ipcRenderer.on('dsh:balance', (_event, data) => {
 	try {
 		window.dispatchEvent(new CustomEvent('dsh-balance-changed', { detail: data }));
+	} catch {
+		/* best effort */
+	}
+});
+
+// File-change pushes from the host plugin → window event for the client panel.
+ipcRenderer.on('dsh:file-changes', (_event, data) => {
+	try {
+		window.dispatchEvent(new CustomEvent('dsh-file-changes-changed', { detail: data }));
 	} catch {
 		/* best effort */
 	}

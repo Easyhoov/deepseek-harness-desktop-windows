@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
 				id: "balance",
 				order: 1,
 				inject: () => ({}),
-			}), BalanceDock);
+			}, BalanceDock));
 			console.log("[dsh-desktop] balance widget mounted (composer.dock)");
 		}
 

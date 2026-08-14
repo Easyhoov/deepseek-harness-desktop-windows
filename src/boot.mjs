@@ -90,6 +90,10 @@ const DESKTOP_PATCHES = [
 				id: 'ui-desktop-balance',
 				name: '@dsh-desktop/balance',
 			},
+			{
+				id: 'ui-desktop-file-changes',
+				name: '@dsh-desktop/file-changes',
+			},
 		],
 	},
 ];

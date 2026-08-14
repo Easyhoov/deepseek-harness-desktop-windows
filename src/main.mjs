@@ -110,6 +110,21 @@ const desktopUi = {
 		if (target === undefined || target.webContents.isDestroyed()) return;
 		target.webContents.send(channel, payload);
 	},
+	/** Register a renderer-callable RPC for desktop plugins (sender-verified). */
+	on(channel, handler) {
+		ipcMain.handle(channel, (event, payload) => {
+			const target = getWindow();
+			if (target === undefined || event.sender.id !== target.webContents.id) {
+				return { ok: false, reason: 'untrusted sender' };
+			}
+			try {
+				return Promise.resolve(handler(payload ?? {}));
+			} catch (error) {
+				return { ok: false, reason: String(error?.message ?? error) };
+			}
+		});
+		return () => ipcMain.removeHandler(channel);
+	},
 };
 
 function showWindow() {

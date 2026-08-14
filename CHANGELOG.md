@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.7] — 2026-08-14
+
+### Changed
+
+- **Marketplace installs via the official `dsh plugin add` mechanism** instead of a bare `npm install`: real npm bundles install with `dsh plugin add <name>` and unpublished bundles with `dsh plugin add github:<repo>` (pnpm is now bundled, so the packaged app has no external pnpm/corepack requirement). Installs land in the `web` profile and take effect after restart.
+- **Each repo's real install method is detected and shown**: the detail view now distinguishes npm / git bundle / one-line installer script (with copy button) / agent skill / MCP service / application / manual, instead of assuming everything is an npm package.
+
 ## [0.4.6] — 2026-08-14
 
 ### Added

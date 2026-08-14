@@ -73,10 +73,10 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		function installByName(pkg) {
+		function installBySource(source) {
 			if (bridge === null) return;
 			store.patch({ busy: true, note: "安装中…" });
-			void Promise.resolve(bridge.install(pkg)).then((result) => {
+			void Promise.resolve(bridge.install(source)).then((result) => {
 				store.patch({ busy: false, note: result && result.ok ? result.note : "安装失败：" + (result && result.reason) });
 				refreshInstalled();
 			});
@@ -85,10 +85,10 @@ window.__ModuleLoader__.load({
 		function install(item) {
 			if (bridge === null) return;
 			if (item.source === "npm") {
-				installByName(item.name);
+				installBySource(item.name);
 				return;
 			}
-			// GitHub repo: resolve the npm package name first.
+			// GitHub repo: resolve the install source first.
 			var resolving = new Set(store.state.resolving);
 			resolving.add(item.id);
 			store.patch({ resolving, note: "" });
@@ -97,9 +97,16 @@ window.__ModuleLoader__.load({
 				next.delete(item.id);
 				if (result && result.ok) {
 					store.patch({ resolving: next });
-					installByName(result.name);
+					installBySource(result.source);
 				} else {
 					var reason = result && result.reason ? result.reason : "not-npm";
+					// Not a dsh bundle — open the detail view, which shows the
+					// repo's real install method (skill/mcp/script/…).
+					if (reason === "not-bundle") {
+						store.patch({ resolving: next });
+						openDetail(item);
+						return;
+					}
 					var note = RESOLVE_NOTES[reason] || " 不是 npm 包，无法一键安装（可到仓库页查看安装方式）";
 					store.patch({ resolving: next, note: item.name + note });
 				}
@@ -109,7 +116,7 @@ window.__ModuleLoader__.load({
 		function openDetail(item) {
 			if (bridge === null || item.source !== "github") return;
 			store.patch({ detail: item, detailData: null, detailBusy: true, note: "" });
-			void Promise.resolve(bridge.detail(item.name, item.defaultBranch)).then((result) => {
+			void Promise.resolve(bridge.detail(item.name, item.defaultBranch, item.type, item.topics)).then((result) => {
 				if (result && result.ok) {
 					store.patch({ detailData: result, detailBusy: false });
 				} else {
@@ -367,13 +374,53 @@ window.__ModuleLoader__.load({
 			return t;
 		}
 
+		function copyText(text, onDone) {
+			var done = false;
+			try {
+				if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+					void navigator.clipboard.writeText(text).then(() => { done = true; onDone && onDone(); }, () => {});
+				}
+			} catch (_) { /* fall through */ }
+			if (done) return;
+			try {
+				var ta = document.createElement("textarea");
+				ta.value = text;
+				ta.style.position = "fixed";
+				ta.style.opacity = "0";
+				document.body.appendChild(ta);
+				ta.select();
+				document.execCommand("copy");
+				document.body.removeChild(ta);
+				onDone && onDone();
+			} catch (_) { /* best effort */ }
+		}
+
+		var CMD_BOX_STYLE = {
+			display: "flex",
+			alignItems: "center",
+			gap: "8px",
+			border: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))",
+			borderRadius: "10px",
+			padding: "8px 12px",
+			fontFamily: "var(--ds-font-family-code, Consolas, monospace)",
+			fontSize: "11.5px",
+			lineHeight: "18px",
+			color: "var(--dsw-alias-label-secondary, #b8c5ea)",
+			wordBreak: "break-all",
+			flex: 1,
+			minWidth: 0,
+		};
+
 		function MarketplaceDetail() {
 			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			var item = s.detail;
+			var copiedDraft = useState("");
+			var copied = copiedDraft[0];
+			var setCopied = copiedDraft[1];
 			if (item === null) return null;
 			var data = s.detailData;
 			var pkg = data && data.pkg ? data.pkg : null;
-			var isApp = item.type === "application" || (item.topics || []).indexOf("desktop-app") !== -1;
+			var install = data && data.install ? data.install : null;
 			var isInstalled = pkg !== null && pkg.name ? s.installed.indexOf(pkg.name) !== -1 : false;
 			var meta = [
 				item.source === "github" && item.stars != null ? "★ " + item.stars : "",
@@ -387,13 +434,13 @@ window.__ModuleLoader__.load({
 			} else if (pkg === null) {
 				npmLine = "仓库信息暂不可用";
 			} else if (pkg.error === "private") {
-				npmErrorLine = "该仓库为私有/应用仓库，未发布到 npm，无法一键安装；安装方式见仓库页";
+				npmErrorLine = "私有/应用仓库，未发布到 npm";
 			} else if (pkg.error === "unpublished") {
-				npmErrorLine = "npm 上无可用版本（同名包为空占位），无法一键安装；安装方式见仓库页";
+				npmErrorLine = "npm 上无可用版本（同名包为空占位）";
 			} else if (pkg.error === "network") {
-				npmErrorLine = "无法连接 npm registry（网络问题），安装信息暂不可用；可到仓库页查看";
+				npmErrorLine = "无法连接 npm registry（网络问题）";
 			} else if (pkg.error === "not-npm") {
-				npmErrorLine = "该仓库不是 npm 包，无法一键安装；安装方式见仓库页";
+				npmErrorLine = "该仓库不是 npm 包";
 			} else if (pkg.published) {
 				npmLine = "npm：" + pkg.name + " · " + (pkg.versions || 0) + " 个版本 · 最新 " + (pkg.latest || "—") + (pkg.lastPublish ? " · 更新于 " + new Date(pkg.lastPublish).toLocaleDateString() : "");
 			} else {
@@ -401,7 +448,17 @@ window.__ModuleLoader__.load({
 			}
 
 			var readme = data && data.readme && String(data.readme).trim() !== "" ? cleanReadme(data.readme) : null;
-			var canInstall = !isApp && !isInstalled && !s.busy && pkg !== null && pkg.name && !pkg.error && pkg.published;
+			var installable = install !== null && (install.method === "npm" || install.method === "git") && install.source;
+			var canInstall = installable && !isInstalled && !s.busy;
+			var command = install !== null && install.command ? install.command : null;
+			var installNote = install !== null && install.note ? install.note : "";
+
+			var doCopy = function (text) {
+				copyText(text, () => {
+					setCopied(text);
+					setTimeout(() => setCopied(""), 1500);
+				});
+			};
 
 			return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "10px", color: "var(--dsw-alias-label-primary, #e6ecff)" } },
 				createElement("button", { type: "button", style: { ...ACT_STYLE, alignSelf: "flex-start" }, onClick: closeDetail }, "← 返回"),
@@ -412,12 +469,20 @@ window.__ModuleLoader__.load({
 				item.description
 					? createElement("div", { style: { fontSize: "13px", lineHeight: "20px", color: "var(--dsw-alias-label-secondary, #b8c5ea)" } }, item.description)
 					: null,
-				createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+				createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
 					canInstall
-						? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => installByName(pkg.name) }, s.busy ? "安装中…" : "一键安装")
+						? createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => installBySource(install.source) }, s.busy ? "安装中…" : isInstalled ? "已安装" : "一键安装")
 						: null,
 					createElement("a", { ...repoLinkProps(item.url), style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" } }, "打开仓库页")),
-				pkg !== null
+				installNote !== ""
+					? createElement("div", { style: { fontSize: "12px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary, #b8c5ea)" } }, installNote)
+					: null,
+				command !== null
+					? createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+						createElement("div", { style: CMD_BOX_STYLE }, command),
+						createElement("button", { type: "button", style: ACT_STYLE, onClick: () => doCopy(command) }, copied === command ? "已复制" : "复制"))
+					: null,
+				pkg !== null && (npmLine !== "" || npmErrorLine !== "")
 					? createElement("div", { style: { border: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", borderRadius: "10px", padding: "8px 12px", fontSize: "12px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary, #b8c5ea)" } }, npmLine || npmErrorLine)
 					: null,
 				readme !== null

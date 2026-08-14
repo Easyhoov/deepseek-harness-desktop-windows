@@ -189,6 +189,27 @@ export function apply(ctx) {
 		return response;
 	}
 
+	// A real dsh plugin bundle declares a patch layer under `dsh.bundle`.
+	const isBundle = (pkg) => Boolean(pkg?.dsh && pkg.dsh.bundle && typeof pkg.dsh.bundle.patch === 'string');
+
+	// Some repos ship a one-line installer instead of an npm bundle.
+	async function detectInstallScript(fullName, branches) {
+		for (const file of ['install.sh', 'install.ps1']) {
+			for (const branch of branches) {
+				try {
+					const response = await fetchRepoFile(fullName, branch, file);
+					if (response.status === 404) continue;
+					if (!response.ok) break;
+					if (file === 'install.sh') return { command: `curl -fsSL https://raw.githubusercontent.com/${fullName}/${branch}/install.sh | bash`, script: file };
+					return { command: `irm https://raw.githubusercontent.com/${fullName}/${branch}/install.ps1 | iex`, script: file };
+				} catch {
+					break;
+				}
+			}
+		}
+		return null;
+	}
+
 	const offResolve = ui.on('dsh:marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
 		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
 		for (const branch of branchCandidates(defaultBranch)) {
@@ -202,21 +223,28 @@ export function apply(ctx) {
 				return { ok: false, reason: 'network' }; // unreachable (common CN network case)
 			}
 			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) return { ok: false, reason: 'not-npm' };
-			if (pkg.private === true) return { ok: false, reason: 'private', name: pkg.name }; // app/private repo, never published
-			if (!(await verifyNpmPackage(pkg.name))) return { ok: false, reason: 'unpublished', name: pkg.name }; // name exists but nothing to install
-			return { ok: true, name: pkg.name };
+			if (pkg.private === true) return { ok: false, reason: 'private', name: pkg.name };
+			if (!isBundle(pkg)) return { ok: false, reason: 'not-bundle', name: pkg.name }; // not a dsh plugin bundle
+			const info = await fetchNpmInfo(pkg.name);
+			if (info.reachable && info.published) return { ok: true, source: pkg.name, method: 'npm', name: pkg.name };
+			// Unpublished (or registry unreachable) bundle: install from git.
+			return { ok: true, source: `github:${fullName}`, method: 'git', name: pkg.name };
 		}
 		return { ok: false, reason: 'not-npm' };
 	});
 
 	// One repository's detail payload for the in-app detail view: npm publish
-	// status plus the README body. Every piece degrades independently.
-	const offDetail = ui.on('dsh:marketplace-detail', async ({ fullName, defaultBranch } = {}) => {
+	// status, the install method (npm/git/script/skill/mcp/app/manual), and the
+	// README body. Every piece degrades independently.
+	const offDetail = ui.on('dsh:marketplace-detail', async ({ fullName, defaultBranch, type, topics } = {}) => {
 		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
 		const branches = branchCandidates(defaultBranch);
+		const topicList = Array.isArray(topics) ? topics.map((t) => String(t).toLowerCase()) : [];
+		const catalogType = typeof type === 'string' ? type : 'plugin';
+		const hasTopic = (...keys) => topicList.some((t) => keys.some((k) => t.includes(k)));
 
 		// 1. package.json + npm registry status
-		const pkgInfo = { name: null, private: false, published: false, versions: null, latest: null, lastPublish: null, error: null };
+		const pkgInfo = { name: null, private: false, published: false, versions: null, latest: null, lastPublish: null, error: null, bundle: false };
 		for (const branch of branches) {
 			let pkg;
 			try {
@@ -230,6 +258,7 @@ export function apply(ctx) {
 			}
 			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) { pkgInfo.error = 'not-npm'; break; }
 			pkgInfo.name = pkg.name;
+			pkgInfo.bundle = isBundle(pkg);
 			if (pkg.private === true) { pkgInfo.private = true; pkgInfo.error = 'private'; break; }
 			const info = await fetchNpmInfo(pkg.name);
 			if (!info.reachable) { pkgInfo.error = 'network'; break; }
@@ -242,7 +271,40 @@ export function apply(ctx) {
 		}
 		if (pkgInfo.name === null && pkgInfo.error === null) pkgInfo.error = 'not-npm';
 
-		// 2. README (common filenames, first non-empty wins)
+		// 2. Install method — authoritative for the detail-view actions.
+		const isApp = catalogType === 'application' || topicList.indexOf('desktop-app') !== -1;
+		const isSkill = catalogType === 'skill' || hasTopic('agent-skills', 'skill');
+		const isMcp = hasTopic('mcp');
+		let install;
+		if (isApp) {
+			install = { method: 'application', source: null, command: null, note: '独立应用，需到仓库页下载或构建' };
+		} else if (pkgInfo.name !== null && pkgInfo.error !== 'network' && pkgInfo.error !== 'not-npm') {
+			if (pkgInfo.bundle) {
+				if (pkgInfo.published) {
+					install = { method: 'npm', source: pkgInfo.name, command: `dsh plugin --profile web add ${pkgInfo.name}`, note: null };
+				} else if (!pkgInfo.private) {
+					install = { method: 'git', source: `github:${fullName}`, command: `dsh plugin --profile web add github:${fullName}`, note: '从 GitHub 安装（首次可能需在 pnpm-workspace.yaml 授权构建脚本）' };
+				} else {
+					install = { method: 'manual', source: null, command: null, note: '私有仓库，无法自动安装' };
+				}
+			} else if (isSkill) {
+				install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字> 或项目 .dsh/skills/<名字>' };
+			} else if (isMcp) {
+				install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP，而不是安装为 DSH 插件' };
+			} else {
+				const script = await detectInstallScript(fullName, branches);
+				install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '不是 npm 组合包，安装方式见仓库 README' };
+			}
+		} else if (isSkill) {
+			install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字>' };
+		} else if (isMcp) {
+			install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP' };
+		} else {
+			const script = await detectInstallScript(fullName, branches);
+			install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '安装方式见仓库 README' };
+		}
+
+		// 3. README (common filenames, first non-empty wins)
 		let readme = null;
 		for (const branch of branches) {
 			for (const file of ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README']) {
@@ -259,30 +321,36 @@ export function apply(ctx) {
 			if (readme !== null) break;
 		}
 
-		return { ok: true, pkg: pkgInfo, readme };
+		return { ok: true, pkg: pkgInfo, install, readme };
 	});
 
-	const offInstall = ui.on('dsh:marketplace-install', async ({ pkg } = {}) => {
-		if (typeof pkg !== 'string' || !PKG_NAME_PATTERN.test(pkg)) return { ok: false, reason: 'invalid package name' };
-		if (typeof ui.profileDir !== 'string' || ui.profileDir === '') return { ok: false, reason: 'profile directory unknown' };
-		if (typeof ui.npm !== 'function') return { ok: false, reason: 'npm runner unavailable' };
-		const res = await ui.npm(['install', '--prefix', ui.profileDir, '--no-save', pkg]);
+	const offInstall = ui.on('dsh:marketplace-install', async ({ source } = {}) => {
+		if (typeof source !== 'string' || source === '') return { ok: false, reason: 'invalid source' };
+		if (typeof ui.dshPlugin !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
+		const res = await ui.dshPlugin(['add', source]);
 		if (res.code !== 0) {
-			const tail = (res.stderr || res.stdout || 'npm failed').trim().split('\n').slice(-6).join(' ');
-			return { ok: false, reason: tail.slice(-500) };
+			const tail = (res.stderr || res.stdout || 'dsh plugin failed').trim().split('\n').slice(-8).join(' ');
+			return { ok: false, reason: tail.slice(-600) };
 		}
-		try {
-			if (loader !== undefined) await loader.create({ name: pkg });
-			return { ok: true, mounted: true, note: '已安装并挂载宿主；界面新元素刷新后生效' };
-		} catch (error) {
-			return { ok: true, mounted: false, note: `已安装，但运行时挂载失败（重启后生效）：${String(error?.message ?? error)}` };
-		}
+		return { ok: true, mounted: false, note: '已安装进 web profile，重启应用后生效' };
 	});
 
 	const offInstalled = ui.on('dsh:marketplace-installed', () => {
 		const names = [];
 		if (loader !== undefined) {
 			for (const entry of loader.entries()) names.push(entry.options.name);
+		}
+		// Reflect the profile manifest's bundle list too (official installs land
+		// there and only mount on the next boot).
+		if (typeof ui.profileDir === 'string' && ui.profileDir !== '') {
+			try {
+				const manifest = JSON.parse(readFileSync(join(ui.profileDir, 'package.json'), 'utf8'));
+				for (const bundle of manifest.dsh?.profile?.bundles ?? []) {
+					if (names.indexOf(bundle) === -1) names.push(bundle);
+				}
+			} catch {
+				/* no profile manifest yet */
+			}
 		}
 		return {
 			ok: true,

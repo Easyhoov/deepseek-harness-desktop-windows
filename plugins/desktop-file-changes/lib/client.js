@@ -106,6 +106,7 @@ window.__ModuleLoader__.load({
 			justifyContent: "center",
 			paddingTop: "10vh",
 			background: "rgba(5,8,18,.45)",
+			pointerEvents: "auto",
 		};
 		var CARD_STYLE = {
 			width: "min(560px, 88vw)",

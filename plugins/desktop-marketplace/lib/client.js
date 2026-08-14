@@ -26,12 +26,27 @@ window.__ModuleLoader__.load({
 		};
 
 		function runSearch(query) {
-			if (bridge === null) return;
+			if (bridge === null) {
+				store.patch({ note: "桥接不可用" });
+				return;
+			}
 			store.patch({ busy: true, note: "" });
 			void Promise.resolve(bridge.search(query)).then((result) => {
-				store.patch({ busy: false, results: result && result.ok ? result.results : [], note: result && result.ok ? "" : "搜索失败" });
+				if (!result || !result.ok) {
+					store.patch({ busy: false, note: "搜索失败（网络或接口限流），稍后再试" });
+					return;
+				}
+				store.patch({ busy: false, results: result.results, note: result.results.length === 0 ? "没有匹配结果" : "" });
 			});
 		}
+
+		// Second entry point: the custom chrome bar's ⋯ menu dispatches this
+		// event; the sidebar footer button shares the same handler.
+		window.addEventListener("dsh-marketplace-open", () => {
+			store.patch({ open: true });
+			refreshInstalled();
+			if (store.state.results.length === 0) runSearch("");
+		});
 
 		function refreshInstalled() {
 			if (bridge === null) return;
@@ -84,6 +99,7 @@ window.__ModuleLoader__.load({
 			justifyContent: "center",
 			paddingTop: "8vh",
 			background: "rgba(5,8,18,.45)",
+			pointerEvents: "auto",
 		};
 		var CARD_STYLE = {
 			width: "min(640px, 90vw)",

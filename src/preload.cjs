@@ -365,6 +365,7 @@ function installChrome() {
 			<button class="dch-btn dch-close" id="${CHROME_BAR_ID}-close" title="关闭（隐藏到托盘）">✕</button>
 		</div>
 		<div class="dch-menu" id="${CHROME_BAR_ID}-menu-panel">
+			<div class="dch-mi" data-act="marketplace">插件市场</div>
 			<div class="dch-mi" data-act="check-updates">检查应用更新</div>
 			<div class="dch-mi" data-act="check-dsh-update">更新 dsh（官方版）</div>
 			<div class="dch-mi" data-act="rollback-dsh">回退 dsh 到内置版</div>
@@ -387,6 +388,10 @@ function installChrome() {
 		const item = event.target.closest('.dch-mi');
 		if (item === null) return;
 		closeMenu();
+		if (item.dataset.act === 'marketplace') {
+			window.dispatchEvent(new CustomEvent('dsh-marketplace-open'));
+			return;
+		}
 		void window.dshDesktop.menu.action(item.dataset.act);
 	});
 	window.addEventListener('click', closeMenu);

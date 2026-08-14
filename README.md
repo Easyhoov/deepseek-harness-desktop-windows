@@ -1,5 +1,9 @@
 # DeepSeek Harness Desktop
 
+[![GitHub release](https://img.shields.io/github/v/release/Easyhoov/deepseek-harness-desktop?label=release)](https://github.com/Easyhoov/deepseek-harness-desktop/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Topics](https://img.shields.io/badge/topics-deepseek--harness%20%7C%20dsh--plugin-4D6BFE)](https://github.com/topics/dsh-plugin)
+
 > An unofficial desktop application for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the host composition boots **in-process** inside Electron, the built Web frontend loads from the local filesystem, and every `/api` request plus event downlink crosses an Electron **IPC bridge** — no browser, no listening port, no local HTTP server.
 >
 > ⚠️ **Unofficial.** This project is **not affiliated with, endorsed by, or published by DeepSeek**. It packages the open-source `@deepseek-ai/dsh` distribution as-is. The whale mark is the official DeepSeek Harness favicon used for visual consistency only, and remains a DeepSeek trademark.
@@ -11,6 +15,8 @@
 ## Why another desktop wrapper?
 
 Most community wrappers spawn the `dsh web` CLI and point a browser window at `127.0.0.1:3080`. This one follows the integration seam the upstream design documents explicitly: *"Electron loads dist over `file://` and carries fetch over an IPC bridge"* (`dsh-host-webserver`). The whole shipped composition runs **inside the Electron main process**, so sessions, goals, background jobs, and plugins are first-class local state — closing the window (to the tray) keeps them running.
+
+![DeepSeek Harness Desktop](docs/screenshots/app.png)
 
 ## Features
 
@@ -105,24 +111,46 @@ node scripts/repair-log.mjs "<home>/sessions/<workspace>/<session-id>/session.js
 
 ```
 Electron main process
-  └─ dsh web profile composition (booted in-process via dsh-app-boot)
+  └─ dsh web profile composition (booted in-process via dsh-app-boot;
+     install anchor = bundled copy or the <userData>/agent overlay)
        ├─ webserver row disabled → in-process webServer stub with identical
        │   route/fallback/index-tap semantics, zero sockets
        ├─ every shipped host row (connection, modules, api-gateway, …) mounts
        │   unchanged against the stub; their routes are captured and dispatched
+       ├─ desktopUi service (send / on / npm / profileDir) for desktop plugins
+       ├─ @dsh-desktop/{balance,file-changes,marketplace} mounted via overlay
        └─ apiProxy event streams (mux/host) pumped by the main process
 
 Renderer (app://localhost serving a materialized dist copy)
   ├─ preload replaces window.fetch / window.WebSocket with IPC shims
-  └─ shipped client code (37 plugin bundles) runs unmodified
+  ├─ preload injects the 36px glass chrome bar + window.dshDesktop bridge
+  └─ shipped client code (37 plugin bundles) runs unmodified, plus the
+     desktop plugin client halves
 
 IPC channels
   dsh:fetch / dsh:fetch-abort / dsh:fetch-stream-ready / dsh:fetch-chunk /
   dsh:fetch-end          upstream RPC (unary + chunked bodies)
   dsh:ws-open / dsh:ws-frame / dsh:ws-close     downstream event streams
+  dsh:chrome-*           frameless window controls / menu
+  dsh:balance, dsh:file-changes-*, dsh:marketplace-*   desktop plugin RPC
 ```
 
 The transport seam is upstream's own design: `toFetchHandler(apiProxy)` wraps the API gateway into a transport-agnostic `Request → Response` function, and the trust fence treats the renderer as the loopback caller it logically is (`Host: 127.0.0.1` on every mock request, sender-verified IPC).
+
+### Desktop plugins
+
+The three bundled widgets (`desktop-balance`, `desktop-file-changes`, `desktop-marketplace`) are ordinary **dual-face dsh plugins** — the same shape as any shipped row. `boot.mjs` copies `plugins/*` into the profile's `node_modules` (keyed by each package's `name`) and mounts them through the desktop overlay; the client halves enter the boot graph through the standard `dsh.client` scan. The pattern:
+
+1. `plugins/<name>/package.json` — `main: lib/index.js`, `exports["./client"]`, `dsh.client {platform: "web", inject: [...]}`, **and `"./package.json"` in `exports`** (the module scan resolves it; omitting it silently drops the plugin).
+2. `lib/index.js` — host half (`export function apply(ctx)`): `const ui = ctx.get('desktopUi')` — `ui.send(channel, payload)` pushes to the renderer, `ui.on(channel, handler)` registers a sender-verified RPC, `ui.npm(args)` runs the bundled npm, `ui.profileDir` is the profile directory.
+3. `lib/client.js` — `window.__ModuleLoader__.load({id, factory})` bundle; `exports.inject = ["slots"]` and `ctx.slots.register({...}, Component)` — the component is the **second argument of `register`** (inside the `inject` factory), and session-scoped slots receive `sessionId` through `inject: (sessionId) => ({sessionId})`.
+4. One overlay row: `{ id: 'ui-desktop-<name>', name: '@dsh-desktop/<name>' }` in `boot.mjs`.
+
+Live session events (`ctx.on('session/event')`), settings/credentials services, and the loader (`ctx.loader.create` for runtime mounts) are all reachable from the host half — that is the in-process advantage over shell wrappers.
+
+### The dsh overlay channel
+
+"⋯ → 更新 dsh" installs an official `@deepseek-ai/dsh` release into `<userData>/agent` (staging → atomic swap, bundled npm, no compilation) and relaunches. On boot, `boot.mjs` prefers that package.json as the **install anchor**: the healed `profiles/node_modules` fallback junctions and the bundle resolution both follow it, so the whole composition boots from the overlay in-process. Rollback removes the directory. Native deps (koffi/sharp/node-addon-require-builtin) are N-API prebuilds, so the overlay loads under Electron's Node without rebuilds.
 
 ## Known limitations / roadmap
 
@@ -130,6 +158,10 @@ The transport seam is upstream's own design: `toFetchHandler(apiProxy)` wraps th
 - No code-signing certificate (SmartScreen warns; `CSC_LINK` / `CSC_KEY_PASSWORD` in CI enable signing).
 - Windows-only packaging for now (main-process code is cross-platform; macOS/Linux configs are the next step).
 - **Planned:** launch-directory workspace preselection (`dsh-desktop.exe <dir>` / context-menu open), dependency slimming (drop TUI/terminal packages → ~60 MB installers), multi-window sessions, CSP injection.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
@@ -170,6 +202,10 @@ MIT. The packaged `@deepseek-ai/dsh` distribution and the whale favicon are © D
 ## 开发与打包
 
 `npm install && npm start`（开发）；`npm run dist`（便携 + NSIS）。四个踩坑记录（均为本仓库实测修复）：禁用 `npmRebuild`（node-pty 无法在无 Spectre 库时编译且 web 组合不用它）；`node_modules` 全量 `asarUnpack`（junction 不能指向 asar 内部）；严禁全局 `ELECTRON_RUN_AS_NODE`（utility 子进程崩溃循环）；`app://` 协议处理器用 fs 直读而非 `net.fetch(file://)`。目录选择器用 Electron 原生对话框替代 koffi 子进程后端。
+
+**桌面插件开发**：余额/文件还原/插件市场都是普通双面 dsh 插件（`plugins/*`，启动时拷入 profile 的 node_modules 并经 overlay 挂载）。host 半注入 `desktopUi`（`send`/`on`/`npm`/`profileDir`），可直接读会话事件流与宿主服务；client 半注册 slot 时组件必须是 `register` 的第二参数。三个内置插件就是模板，详见英文版 "Desktop plugins" 一节。
+
+**dsh overlay 双通道更新**：⋯菜单 → 更新 dsh，把官方 `@deepseek-ai/dsh` 装进 `<userData>/agent`，下次启动组合整体从 overlay 引导（回退链接重指向、进程内重启），一键回退内置版。
 
 ## 会话日志修复
 

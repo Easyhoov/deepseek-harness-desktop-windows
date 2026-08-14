@@ -267,6 +267,19 @@ function createWindow() {
 	created.once('ready-to-show', () => {
 		destroySplash();
 		created.show();
+		// Docs screenshot hook: DSH_DESKTOP_CAPTURE=<png path> saves a capture
+		// a few seconds after the window is ready, then the app keeps running.
+		const capturePath = process.env.DSH_DESKTOP_CAPTURE;
+		if (capturePath !== undefined && capturePath !== '') {
+			setTimeout(() => {
+				void created.webContents.capturePage().then((image) => {
+					void writeFile(capturePath, image.toPNG()).then(() => {
+						logLine(`capture saved: ${capturePath}`);
+						console.log(`[dsh-desktop] capture saved: ${capturePath}`);
+					});
+				}).catch((error) => logLine(`capture failed: ${String(error)}`));
+			}, 5000);
+		}
 	});
 	// Custom-chrome maximize state → the injected title bar swaps its glyph.
 	const sendMaximized = (isMaximized) => {

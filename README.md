@@ -16,7 +16,7 @@
 
 Most community wrappers spawn the `dsh web` CLI and point a browser window at `127.0.0.1:3080`. This one follows the integration seam the upstream design documents explicitly: *"Electron loads dist over `file://` and carries fetch over an IPC bridge"* (`dsh-host-webserver`). The whole shipped composition runs **inside the Electron main process**, so sessions, goals, background jobs, and plugins are first-class local state — closing the window (to the tray) keeps them running.
 
-![DeepSeek Harness Desktop](<img width="1800" height="1150" alt="image" src="https://github.com/user-attachments/assets/42050622-7e3c-4b86-967e-043ca3b314ca" />)
+![DeepSeek Harness Desktop](docs/screenshots/image.png)
 
 ## Features
 

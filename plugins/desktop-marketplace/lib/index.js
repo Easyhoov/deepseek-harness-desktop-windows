@@ -123,24 +123,46 @@ export function apply(ctx) {
 		};
 	});
 
+	// True only when the name is actually published to the npm registry with
+	// at least one version — catches squatted/placeholder packages that exist
+	// as names but can never be installed (e.g. the empty "open-design" name).
+	async function verifyNpmPackage(name) {
+		try {
+			const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`, {
+				headers: { accept: 'application/vnd.npm.install-v1+json' },
+				signal: AbortSignal.timeout(10_000),
+			});
+			if (!response.ok) return false;
+			const data = await response.json();
+			const tags = data['dist-tags'];
+			return (tags !== null && typeof tags === 'object' && typeof tags.latest === 'string')
+				|| (Array.isArray(data.versions) ? data.versions.length > 0 : Boolean(data.versions && Object.keys(data.versions).length > 0));
+		} catch {
+			return false;
+		}
+	}
+
 	const offResolve = ui.on('dsh:marketplace-resolve-package', async ({ fullName, defaultBranch } = {}) => {
-		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid repository' };
+		if (typeof fullName !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { ok: false, reason: 'invalid' };
 		for (const branch of [defaultBranch, 'main', 'master']) {
 			if (typeof branch !== 'string' || branch === '') continue;
+			let pkg;
 			try {
 				const response = await fetch(`https://raw.githubusercontent.com/${fullName}/${branch}/package.json`, {
 					signal: AbortSignal.timeout(10_000),
 				});
-				if (response.status === 404) continue;
-				if (!response.ok) break;
-				const pkg = await response.json();
-				if (typeof pkg.name === 'string' && PKG_NAME_PATTERN.test(pkg.name)) return { ok: true, name: pkg.name };
-				break;
+				if (response.status === 404) continue; // branch has no package.json — try the next one
+				if (!response.ok) return { ok: false, reason: 'network' };
+				pkg = await response.json();
 			} catch {
-				break;
+				return { ok: false, reason: 'network' }; // raw.githubusercontent unreachable (common CN network case)
 			}
+			if (typeof pkg.name !== 'string' || !PKG_NAME_PATTERN.test(pkg.name)) return { ok: false, reason: 'not-npm' };
+			if (pkg.private === true) return { ok: false, reason: 'private', name: pkg.name }; // app/private repo, never published
+			if (!(await verifyNpmPackage(pkg.name))) return { ok: false, reason: 'unpublished', name: pkg.name }; // name exists but nothing to install
+			return { ok: true, name: pkg.name };
 		}
-		return { ok: false, reason: 'not an npm package' };
+		return { ok: false, reason: 'not-npm' };
 	});
 
 	const offInstall = ui.on('dsh:marketplace-install', async ({ pkg } = {}) => {

@@ -24,6 +24,13 @@ window.__ModuleLoader__.load({
 			npm: "npm",
 		};
 
+		var RESOLVE_NOTES = {
+			private: " 是应用/私有仓库，未发布到 npm，无法一键安装（可到仓库页查看安装方式）",
+			unpublished: " 在 npm 上没有可安装版本（同名包为空占位），无法一键安装（可到仓库页查看安装方式）",
+			network: " 解析失败（网络不可达），无法一键安装；请稍后重试，或到仓库页查看安装方式",
+			invalid: " 仓库地址无效，无法一键安装",
+		};
+
 		var store = {
 			state: { open: false, query: "", type: "recommended", sort: "score", results: [], installed: [], counts: {}, updatedAt: null, busy: false, note: "", resolving: new Set() },
 			listeners: new Set(),
@@ -90,7 +97,9 @@ window.__ModuleLoader__.load({
 					store.patch({ resolving: next });
 					doInstall(result.name);
 				} else {
-					store.patch({ resolving: next, note: item.name + " 不是 npm 包，无法一键安装（可到仓库页查看安装方式）" });
+					var reason = result && result.reason ? result.reason : "not-npm";
+					var note = RESOLVE_NOTES[reason] || " 不是 npm 包，无法一键安装（可到仓库页查看安装方式）";
+					store.patch({ resolving: next, note: item.name + note });
 				}
 			});
 		}
@@ -215,6 +224,10 @@ window.__ModuleLoader__.load({
 			var rows = s.results.map((item) => {
 				var isInstalled = s.installed.indexOf(item.name) !== -1;
 				var resolving = s.resolving.has(item.id);
+				// Applications (or repos tagged desktop-app) are standalone
+				// programs, not DSH plugins — opening the repo page beats a
+				// doomed one-click npm install.
+				var isApp = item.type === "application" || (item.topics || []).indexOf("desktop-app") !== -1;
 				var meta = [
 					item.source === "github" && item.stars != null ? "★ " + item.stars : "",
 					updatedLabel(item.pushedAt),
@@ -236,12 +249,20 @@ window.__ModuleLoader__.load({
 							? createElement("div", { style: { marginTop: "3px" } },
 								item.topics.map((topic) => createElement("span", { key: topic, style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", marginRight: "6px" } }, "#" + topic)))
 							: null),
-					createElement("button", {
-						type: "button",
-						style: ACT_STYLE,
-						disabled: s.busy || isInstalled || resolving,
-						onClick: () => install(item),
-					}, isInstalled ? "已安装" : resolving ? "解析中…" : "安装"));
+					isApp
+						? createElement("a", {
+							key: "open",
+							href: item.url,
+							target: "_blank",
+							rel: "noreferrer",
+							style: { ...ACT_STYLE, textDecoration: "none", display: "inline-block", textAlign: "center" },
+						}, "打开仓库页")
+						: createElement("button", {
+							type: "button",
+							style: ACT_STYLE,
+							disabled: s.busy || isInstalled || resolving,
+							onClick: () => install(item),
+						}, isInstalled ? "已安装" : resolving ? "解析中…" : "安装"));
 			});
 
 			var updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : "—";

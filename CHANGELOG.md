@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.2] — 2026-08-14
+
+### Changed
+
+- **Marketplace install guards against unpublished/placeholder packages**: after resolving a GitHub repo's npm package name, the host now verifies the name against the npm registry and refuses install when there is nothing real to install. Resolve failures are distinguished (invalid / network / not-npm / private / unpublished) and the UI shows the matching reason instead of a blanket "not an npm package".
+- **Application entries open the repo page instead of installing**: repos classified as `application` (or tagged `desktop-app`) render a "打开仓库页" action rather than a doomed one-click npm install.
+
 ## [0.4.1] — 2026-08-14
 
 ### Changed

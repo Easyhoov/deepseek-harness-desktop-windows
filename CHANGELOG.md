@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.5] — 2026-08-14
+
+### Changed
+
+- **"检查更新" now always answers visibly**: the menu entry previously ran the check silently — when it found a new version there was nothing on screen until the download finished, so it felt dead. It now shows a dialog for every outcome (check failed with the reason / already up to date / new version found and downloading in the background).
+- **Automatic update check on startup**: the app checks once, 25 seconds after boot, so users get the "更新已就绪" notification without opening the menu. Concurrent checks are deduplicated.
+
 ## [0.4.4] — 2026-08-14
 
 ### Added

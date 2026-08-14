@@ -404,9 +404,30 @@ function installChromeIpc() {
 		if (!trusted(event)) return null;
 		const userData = app.getPath('userData');
 		switch (action) {
-			case 'check-updates':
-				void updater?.check();
+			case 'check-updates': {
+				if (updater === undefined) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'warning', title: APP_NAME, message: '更新服务不可用', detail: '内置更新器未初始化。', buttons: ['确定'], noLink: true });
+					return true;
+				}
+				const result = await updater.check();
+				if (result.error !== null) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'warning', title: APP_NAME, message: '检查更新失败', detail: String(result.error), buttons: ['确定'], noLink: true });
+					return true;
+				}
+				if (result.found === null) {
+					dialog.showMessageBoxSync(getWindow(), { type: 'info', title: APP_NAME, message: '已是最新版本', detail: `当前版本 ${app.getVersion()}`, buttons: ['确定'], noLink: true });
+					return true;
+				}
+				dialog.showMessageBoxSync(getWindow(), {
+					type: 'info',
+					title: APP_NAME,
+					message: `发现新版本 ${result.found}`,
+					detail: '正在后台下载，下载完成后会通过系统通知提醒你，退出应用时自动安装。',
+					buttons: ['确定'],
+					noLink: true,
+				});
 				return true;
+			}
 			case 'check-dsh-update': {
 				const current = activeDshVersion(userData);
 				const latest = await checkLatestDsh({ logLine });
@@ -562,6 +583,7 @@ async function run() {
 	registerDesktopSurface();
 	notifications = installNotifications({ ctx, getWindow, logLine });
 	updater = installUpdater({ app, notify: notifications?.notify, logLine });
+	updater?.checkSoon?.();
 
 	if (SCHEME === 'app') {
 		protocol.handle('app', async (request) => {

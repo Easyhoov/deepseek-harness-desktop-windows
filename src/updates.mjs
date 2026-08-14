@@ -12,8 +12,29 @@ const { autoUpdater } = updaterPkg;
 
 export function installUpdater({ app, notify, logLine }) {
 	if (!app.isPackaged) {
-		return { check: async () => {}, dispose() {} };
+		return {
+			check: async () => ({ found: null, error: 'development build' }),
+			checkSoon() {},
+			dispose() {},
+		};
 	}
+	let inProgress = false;
+	let started = false;
+	const check = async () => {
+		if (inProgress) return { found: null, error: 'check already running' };
+		inProgress = true;
+		try {
+			const result = await autoUpdater.checkForUpdates();
+			const version = result?.updateInfo?.version ?? null;
+			logLine(`update check: ${version ?? 'none'}`);
+			return { found: version !== null && version !== app.getVersion() ? version : null, error: null };
+		} catch (error) {
+			logLine(`update check failed: ${String(error)}`);
+			return { found: null, error: String(error?.message ?? error) };
+		} finally {
+			inProgress = false;
+		}
+	};
 	try {
 		autoUpdater.autoDownload = true;
 		autoUpdater.autoInstallOnAppQuit = true;
@@ -25,13 +46,15 @@ export function installUpdater({ app, notify, logLine }) {
 			logLine(`updater: ${String(error)}`);
 		});
 		return {
-			async check() {
-				try {
-					const result = await autoUpdater.checkForUpdates();
-					logLine(`update check: ${result?.updateInfo?.version ?? 'up to date'}`);
-				} catch (error) {
-					logLine(`update check failed: ${String(error)}`);
-				}
+			check,
+			// One delayed background check after boot so updates surface without
+			// the user ever clicking the menu entry.
+			checkSoon(delayMs = 25_000) {
+				if (started) return;
+				started = true;
+				setTimeout(() => {
+					void check();
+				}, delayMs);
 			},
 			dispose() {
 				autoUpdater.removeAllListeners('update-downloaded');
@@ -40,6 +63,10 @@ export function installUpdater({ app, notify, logLine }) {
 		};
 	} catch (error) {
 		logLine(`updater init failed: ${String(error)}`);
-		return { check: async () => {}, dispose() {} };
+		return {
+			check: async () => ({ found: null, error: String(error?.message ?? error) }),
+			checkSoon() {},
+			dispose() {},
+		};
 	}
 }

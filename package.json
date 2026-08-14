@@ -76,7 +76,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://github.com/Easyhoov/deepseek-harness-desktop/releases/latest/download"
+        "url": "https://github.com/Easyhoov/deepseek-harness-desktop-windows/releases/latest/download"
       }
     ],
     "directories": {

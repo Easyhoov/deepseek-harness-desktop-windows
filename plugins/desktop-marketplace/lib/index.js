@@ -1,10 +1,10 @@
-/**
- * @dsh-desktop/marketplace — host half.
+﻿/**
+ * @dsh-desktop/marketplace 鈥?host half.
  *
  * Catalog-first marketplace: a prebuilt catalog (GitHub Action collects and
  * classifies the dsh-plugin / deepseek-harness / dsh topic repos into
  * catalog/catalog.json) is fetched from raw.githubusercontent.com with a
- * 24h local cache — instant search, no GitHub rate limits, offline-capable.
+ * 24h local cache 鈥?instant search, no GitHub rate limits, offline-capable.
  * The live npm registry search remains as a supplementary source. Install
  * resolves a GitHub repo's npm package name (its package.json), then runs
  * the bundled npm into the profile and mounts via ctx.loader.create.
@@ -18,7 +18,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 const name = 'desktop-marketplace';
 const PKG_NAME_PATTERN = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const CATALOG_URL = process.env.DSH_MARKETPLACE_CATALOG_URL
-	|| 'https://raw.githubusercontent.com/Easyhoov/deepseek-harness-desktop/main/catalog/catalog.json';
+	|| 'https://raw.githubusercontent.com/Easyhoov/deepseek-harness-desktop-windows/main/catalog/catalog.json';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function apply(ctx) {
@@ -153,7 +153,7 @@ export function apply(ctx) {
 	}
 
 	// True only when the name is actually published to the npm registry with
-	// at least one version — catches squatted/placeholder packages that exist
+	// at least one version 鈥?catches squatted/placeholder packages that exist
 	// as names but can never be installed (e.g. the empty "open-design" name).
 	async function verifyNpmPackage(name) {
 		const info = await fetchNpmInfo(name);
@@ -180,7 +180,7 @@ export function apply(ctx) {
 			if (response.status !== 404 && !response.ok) throw new Error(`raw ${response.status}`);
 			if (response.status !== 404) return response;
 		} catch {
-			/* raw unreachable — try the API */
+			/* raw unreachable 鈥?try the API */
 		}
 		response = await fetch(`https://api.github.com/repos/${fullName}/contents/${path}?ref=${encodeURIComponent(branch)}`, {
 			headers: { accept: 'application/vnd.github.raw+json', 'user-agent': 'dsh-desktop-marketplace' },
@@ -275,7 +275,7 @@ export function apply(ctx) {
 			let pkg;
 			try {
 				const response = await fetchRepoFile(fullName, branch, 'package.json');
-				if (response.status === 404) continue; // branch has no package.json — try the next one
+				if (response.status === 404) continue; // branch has no package.json 鈥?try the next one
 				if (!response.ok) return { ok: false, reason: 'network' };
 				pkg = await response.json();
 			} catch {
@@ -331,50 +331,50 @@ export function apply(ctx) {
 		}
 		if (pkgInfo.name === null && pkgInfo.error === null) pkgInfo.error = 'not-npm';
 
-		// 2. Install method — authoritative for the detail-view actions.
+		// 2. Install method 鈥?authoritative for the detail-view actions.
 		const isApp = catalogType === 'application' || topicList.indexOf('desktop-app') !== -1;
 		const isSkill = catalogType === 'skill' || hasTopic('agent-skills', 'skill');
 		const isMcp = hasTopic('mcp');
 		let install;
 		if (isApp) {
-			install = { method: 'application', source: null, command: null, note: '独立应用，需到仓库页下载或构建' };
+			install = { method: 'application', source: null, command: null, note: '鐙珛搴旂敤锛岄渶鍒颁粨搴撻〉涓嬭浇鎴栨瀯寤? };
 		} else if (pkgInfo.name !== null && pkgInfo.error !== 'network' && pkgInfo.error !== 'not-npm') {
 			if (pkgInfo.bundle) {
 				if (pkgInfo.published) {
 					install = { method: 'npm', source: pkgInfo.name, command: `dsh plugin --profile web add ${pkgInfo.name}`, note: null };
 				} else if (!pkgInfo.private) {
-					install = { method: 'git', source: `github:${fullName}`, command: `dsh plugin --profile web add github:${fullName}`, note: '从 GitHub 安装（首次可能需在 pnpm-workspace.yaml 授权构建脚本）' };
+					install = { method: 'git', source: `github:${fullName}`, command: `dsh plugin --profile web add github:${fullName}`, note: '浠?GitHub 瀹夎锛堥娆″彲鑳介渶鍦?pnpm-workspace.yaml 鎺堟潈鏋勫缓鑴氭湰锛? };
 				} else {
-					install = { method: 'manual', source: null, command: null, note: '私有仓库，无法自动安装' };
+					install = { method: 'manual', source: null, command: null, note: '绉佹湁浠撳簱锛屾棤娉曡嚜鍔ㄥ畨瑁? };
 				}
 			} else if (!pkgInfo.private) {
-				// Root isn't a bundle — the plugin may live in a monorepo subdir.
+				// Root isn't a bundle 鈥?the plugin may live in a monorepo subdir.
 				const subdir = await findBundleSubdir(fullName, branches, pkgInfo.workspaces);
 				if (subdir !== null) {
-					install = { method: 'git', source: `github:${fullName}#path:${subdir}`, command: `dsh plugin --profile web add github:${fullName}#path:${subdir}`, note: 'monorepo 插件，从子目录安装（首次可能需授权构建脚本）' };
+					install = { method: 'git', source: `github:${fullName}#path:${subdir}`, command: `dsh plugin --profile web add github:${fullName}#path:${subdir}`, note: 'monorepo 鎻掍欢锛屼粠瀛愮洰褰曞畨瑁咃紙棣栨鍙兘闇€鎺堟潈鏋勫缓鑴氭湰锛? };
 				} else if (isSkill) {
-					install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字> 或项目 .dsh/skills/<名字>' };
+					install = { method: 'skill', source: null, command: null, note: '杩欐槸 Agent Skill锛屼笉鏄?DSH 鎻掍欢锛氬畨瑁呭埌 ~/.dsh/skills/<鍚嶅瓧> 鎴栭」鐩?.dsh/skills/<鍚嶅瓧>' };
 				} else if (isMcp) {
-					install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP，而不是安装为 DSH 插件' };
+					install = { method: 'mcp', source: null, command: null, note: '杩欐槸 MCP 鏈嶅姟锛屾寜浠撳簱璇存槑閰嶇疆 MCP锛岃€屼笉鏄畨瑁呬负 DSH 鎻掍欢' };
 				} else {
 					const script = await detectInstallScript(fullName, branches);
-					install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '不是 npm 组合包，安装方式见仓库 README' };
+					install = script !== null ? { method: 'script', source: null, command: script.command, note: '浠撳簱鎻愪緵涓€閿畨瑁呰剼鏈? } : { method: 'manual', source: null, command: null, note: '涓嶆槸 npm 缁勫悎鍖咃紝瀹夎鏂瑰紡瑙佷粨搴?README' };
 				}
 			} else if (isSkill) {
-				install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字> 或项目 .dsh/skills/<名字>' };
+				install = { method: 'skill', source: null, command: null, note: '杩欐槸 Agent Skill锛屼笉鏄?DSH 鎻掍欢锛氬畨瑁呭埌 ~/.dsh/skills/<鍚嶅瓧> 鎴栭」鐩?.dsh/skills/<鍚嶅瓧>' };
 			} else if (isMcp) {
-				install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP，而不是安装为 DSH 插件' };
+				install = { method: 'mcp', source: null, command: null, note: '杩欐槸 MCP 鏈嶅姟锛屾寜浠撳簱璇存槑閰嶇疆 MCP锛岃€屼笉鏄畨瑁呬负 DSH 鎻掍欢' };
 			} else {
 				const script = await detectInstallScript(fullName, branches);
-				install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '不是 npm 组合包，安装方式见仓库 README' };
+				install = script !== null ? { method: 'script', source: null, command: script.command, note: '浠撳簱鎻愪緵涓€閿畨瑁呰剼鏈? } : { method: 'manual', source: null, command: null, note: '涓嶆槸 npm 缁勫悎鍖咃紝瀹夎鏂瑰紡瑙佷粨搴?README' };
 			}
 		} else if (isSkill) {
-			install = { method: 'skill', source: null, command: null, note: '这是 Agent Skill，不是 DSH 插件：安装到 ~/.dsh/skills/<名字>' };
+			install = { method: 'skill', source: null, command: null, note: '杩欐槸 Agent Skill锛屼笉鏄?DSH 鎻掍欢锛氬畨瑁呭埌 ~/.dsh/skills/<鍚嶅瓧>' };
 		} else if (isMcp) {
-			install = { method: 'mcp', source: null, command: null, note: '这是 MCP 服务，按仓库说明配置 MCP' };
+			install = { method: 'mcp', source: null, command: null, note: '杩欐槸 MCP 鏈嶅姟锛屾寜浠撳簱璇存槑閰嶇疆 MCP' };
 		} else {
 			const script = await detectInstallScript(fullName, branches);
-			install = script !== null ? { method: 'script', source: null, command: script.command, note: '仓库提供一键安装脚本' } : { method: 'manual', source: null, command: null, note: '安装方式见仓库 README' };
+			install = script !== null ? { method: 'script', source: null, command: script.command, note: '浠撳簱鎻愪緵涓€閿畨瑁呰剼鏈? } : { method: 'manual', source: null, command: null, note: '瀹夎鏂瑰紡瑙佷粨搴?README' };
 		}
 
 		// 3. README (common filenames, first non-empty wins)
@@ -404,7 +404,7 @@ export function apply(ctx) {
 	const offInstall = ui.on('dsh:marketplace-install', async ({ source } = {}) => {
 		if (typeof source !== 'string' || source === '') return { ok: false, reason: 'invalid source' };
 		if (typeof ui.dshPluginAdd !== 'function') return { ok: false, reason: 'dsh plugin runner unavailable' };
-		if (installTask !== null) return { ok: false, reason: '另一个安装正在进行，请先等待或取消' };
+		if (installTask !== null) return { ok: false, reason: '鍙︿竴涓畨瑁呮鍦ㄨ繘琛岋紝璇峰厛绛夊緟鎴栧彇娑? };
 		const push = (line) => {
 			ui.send('dsh:marketplace-install-progress', { source, line: String(line).slice(0, 500) });
 		};
@@ -413,20 +413,20 @@ export function apply(ctx) {
 			onOutput: (chunk) => push(chunk),
 		});
 		installTask = { source, kill: task.kill };
-		push('开始安装…');
+		push('寮€濮嬪畨瑁呪€?);
 		const res = await task.done;
 		installTask = null;
-		push(res.killed ? '安装超时，已中止' : `退出码 ${res.code}`);
-		if (res.killed) return { ok: false, reason: '安装超时（10 分钟），已中止' };
+		push(res.killed ? '瀹夎瓒呮椂锛屽凡涓' : `閫€鍑虹爜 ${res.code}`);
+		if (res.killed) return { ok: false, reason: '瀹夎瓒呮椂锛?0 鍒嗛挓锛夛紝宸蹭腑姝? };
 		if (res.code !== 0) {
 			const tail = (res.stderr || res.stdout || 'pnpm failed').trim().split('\n').slice(-8).join(' ');
 			return { ok: false, reason: tail.slice(-600) };
 		}
-		return { ok: true, mounted: false, note: '已安装进 web profile，重启应用后生效' };
+		return { ok: true, mounted: false, note: '宸插畨瑁呰繘 web profile锛岄噸鍚簲鐢ㄥ悗鐢熸晥' };
 	});
 
 	const offCancel = ui.on('dsh:marketplace-install-cancel', () => {
-		if (installTask === null) return { ok: false, reason: '没有正在进行的安装' };
+		if (installTask === null) return { ok: false, reason: '娌℃湁姝ｅ湪杩涜鐨勫畨瑁? };
 		installTask.kill();
 		return { ok: true };
 	});
@@ -457,7 +457,7 @@ export function apply(ctx) {
 			const tail = (res.stderr || res.stdout || 'pnpm failed').trim().split('\n').slice(-8).join(' ');
 			return { ok: false, reason: tail.slice(-600) };
 		}
-		return { ok: true, note: '已卸载，重启应用后生效' };
+		return { ok: true, note: '宸插嵏杞斤紝閲嶅惎搴旂敤鍚庣敓鏁? };
 	});
 
 	const offInstalled = ui.on('dsh:marketplace-installed', () => {

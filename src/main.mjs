@@ -22,6 +22,7 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'electron';
 import { writeFile, readFile } from 'node:fs/promises';
 import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { extname, join } from 'node:path';
 import { createIpcWebServer } from './ipc-web-server.mjs';
 import { bootDesktop } from './boot.mjs';
@@ -32,8 +33,44 @@ import { installNotifications } from './notifications.mjs';
 import { createTray } from './tray.mjs';
 import { installUpdater } from './updates.mjs';
 import { runNpm } from './npm-runner.mjs';
-import { addPlugins, removePlugin } from './dsh-runner.mjs';
+import { addPlugins, removePlugin, dshBinPath } from './dsh-runner.mjs';
 import { overlayAnchor, overlayVersion, bundledDshVersion, activeDshVersion, checkLatestDsh, installDshOverlay, rollbackDshOverlay } from './dsh-overlay.mjs';
+
+// ---------------------------------------------------------------------------
+// Community-plugin CLI forwarding: plugins such as the plugin store install
+// bundles by re-invoking the app as `execPath <argv[1]> plugin --profile web
+// add <spec>` (no shell, no ELECTRON_RUN_AS_NODE). Detect that invocation and
+// handle it headlessly — `add`/`remove` run through the direct pnpm runner
+// (no console window), anything else delegates to the bundled dsh CLI — then
+// exit without booting the app.
+// ---------------------------------------------------------------------------
+const cliArgv = process.argv.slice(1);
+const pluginIdx = cliArgv.indexOf('plugin');
+if (pluginIdx !== -1 && cliArgv.slice(pluginIdx).includes('--profile')) {
+	const rest = cliArgv.slice(pluginIdx);
+	const profileIdx = rest.indexOf('--profile');
+	const profileName = profileIdx !== -1 && rest[profileIdx + 1] ? rest[profileIdx + 1] : 'web';
+	const profileDir = join(process.env.DSH_HOME || '', 'profiles', profileName);
+	const addIdx = rest.indexOf('add');
+	const rmIdx = rest.indexOf('remove');
+	let result;
+	try {
+		if (addIdx !== -1 && rest[addIdx + 1]) result = await addPlugins(profileDir, [rest[addIdx + 1]]);
+		else if (rmIdx !== -1 && rest[rmIdx + 1]) result = await removePlugin(profileDir, rest[rmIdx + 1]);
+		else {
+			const r = spawnSync(process.execPath, [dshBinPath(), ...rest], {
+				env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+				stdio: 'inherit',
+				windowsHide: true,
+			});
+			result = { code: r.status ?? 1 };
+		}
+	} catch (error) {
+		process.stderr.write(`[dsh-desktop] CLI forward failed: ${String(error?.message ?? error)}\n`);
+		process.exit(1);
+	}
+	process.exit(result.code ?? 1);
+}
 
 /** File log for packaged runs (the GUI binary detaches from the console). */
 function logLine(line) {

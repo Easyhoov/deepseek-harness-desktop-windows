@@ -34,6 +34,12 @@ function unpack(p) {
 	return p;
 }
 
+/** The bundled dsh CLI entry (lib/bin.js), as a real unpacked path. */
+export function dshBinPath() {
+	const pkgJson = createRequire(import.meta.url).resolve('@deepseek-ai/dsh/package.json');
+	return unpack(join(dirname(pkgJson), 'lib', 'bin.js'));
+}
+
 /**
  * Start one pnpm invocation as a cancellable task.
  * @param {string[]} args - pnpm arguments (add/remove …).

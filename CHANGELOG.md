@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.6] — 2026-08-14
+
+### Added
+
+- **External-plugin install compatibility**: community plugins that install bundles by re-invoking the app (`execPath <argv> plugin --profile web add|remove <spec>`, as the plugin store's own install button does) now work. The app detects the CLI invocation and runs add/remove through the bundled pnpm runner (no console window), delegating any other `plugin` subcommand to the bundled dsh CLI, then exits without booting the UI.
+
 ## [0.5.5] — 2026-08-14
 
 ### Fixed

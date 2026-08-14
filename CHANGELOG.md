@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.5.5] — 2026-08-14
+
+### Fixed
+
+- **Plugin store "载入目录失败"**: the desktop fetch shim routed every renderer `fetch` through the in-process carrier, which only serves `app://localhost` — external URLs (the store catalog at `dsh.aitreez.com`, CDNs) were rejected. External fetches now use the real browser fetch; only `app://localhost` traffic crosses the IPC bridge.
+
 ## [0.5.4] — 2026-08-14
 
 ### Changed

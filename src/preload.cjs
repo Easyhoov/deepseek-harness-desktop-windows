@@ -74,8 +74,23 @@ function streamedResponse(reqId, status, headers) {
 	return new Response(stream, { status, headers });
 }
 
+// The carrier serves only app://localhost in-process; every other URL must go
+// through the real browser fetch (plugin stores, CDNs, docs…). Capture the
+// native fetch before the shim replaces it.
+const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : undefined;
+
 function ipcFetch(input, init) {
 	const req = new Request(input, init);
+	let url;
+	try {
+		url = new URL(req.url);
+	} catch {
+		url = null;
+	}
+	if (url !== null && url.origin !== 'app://localhost') {
+		if (nativeFetch === undefined) return Promise.reject(new Error('fetch unavailable'));
+		return nativeFetch(input, init);
+	}
 	const reqId = ++fetchSeq;
 	const signal = init && init.signal ? init.signal : undefined;
 

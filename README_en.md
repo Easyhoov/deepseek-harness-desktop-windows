@@ -18,7 +18,7 @@
 
 Most community wrappers **spawn the `dsh web` CLI** and point a browser window at `127.0.0.1:3080`. This one is different: the whole shipped composition runs **inside the Electron main process** (in-process integration), the frontend loads locally, and every `/api` request plus event downlink crosses an **IPC bridge** — **zero ports, zero child processes, no local HTTP server**. Sessions, goals, background jobs, and plugins are first-class local state: closing the window (to the tray) keeps them running.
 
-![DeepSeek Harness Desktop](docs/screenshots/app.png)
+![DeepSeek Harness Desktop](docs/screenshots/image.png)
 
 ## Features
 

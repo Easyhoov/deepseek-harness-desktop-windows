@@ -7,6 +7,7 @@ window.__ModuleLoader__.load({
 		var createElement = React.createElement;
 		var useSyncExternalStore = React.useSyncExternalStore;
 		var useState = React.useState;
+		var useEffect = React.useEffect;
 
 		var bridge = window.dshDesktop && window.dshDesktop.marketplace ? window.dshDesktop.marketplace : null;
 
@@ -65,14 +66,6 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		function openMarketplace() {
-			store.patch({ open: true });
-			refreshInstalled();
-			if (store.state.results.length === 0) runSearch(store.state.query, store.state.type, store.state.sort);
-		}
-
-		window.addEventListener("dsh-marketplace-open", openMarketplace);
-
 		function install(item) {
 			if (bridge === null) return;
 			var doInstall = function (pkg) {
@@ -102,54 +95,42 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// Sidebar-foot entry styled like the built-in 设置 trigger row.
 		var BTN_STYLE = {
-			display: "inline-flex",
-			alignItems: "center",
-			gap: "4px",
+			boxSizing: "border-box",
 			cursor: "pointer",
+			width: "calc(100% + 8px)",
+			height: "34px",
+			color: "var(--dsw-alias-label-primary, #e6ecff)",
 			background: "transparent",
 			border: "none",
-			padding: "4px 8px",
-			borderRadius: "8px",
-			fontSize: "12px",
-			color: "var(--dsw-alias-label-secondary, #b8c5ea)",
+			borderRadius: "12px",
+			alignItems: "center",
+			display: "flex",
+			gap: "8px",
+			margin: "4px -4px",
+			padding: "6px 2px 6px 10px",
+			fontFamily: "inherit",
+			fontSize: "14px",
+			lineHeight: "22px",
+			overflow: "hidden",
+			textAlign: "left",
 		};
 
 		function MarketplaceButton() {
 			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			return createElement("button", {
+				type: "button",
 				style: BTN_STYLE,
 				title: "浏览与安装 dsh 插件",
-				onClick: openMarketplace,
+				onClick: (e) => openMarketplace(e.currentTarget),
 			}, "插件市场");
 		}
 
-		var PANEL_STYLE = {
-			position: "absolute",
-			inset: "0",
-			zIndex: 4001,
-			display: "flex",
-			alignItems: "flex-start",
-			justifyContent: "center",
-			paddingTop: "6vh",
-			background: "rgba(5,8,18,.45)",
-			pointerEvents: "auto",
-		};
-		var CARD_STYLE = {
-			width: "min(680px, 92vw)",
-			maxHeight: "84vh",
-			overflow: "auto",
-			boxSizing: "border-box",
-			padding: "16px",
-			borderRadius: "16px",
-			background: "var(--dsw-alias-bg-layer-2, #101828)",
-			border: "1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.1))",
-			color: "var(--dsw-alias-label-primary, #e6ecff)",
-			fontFamily: "var(--dsw-font-family, \"Segoe UI\", system-ui, sans-serif)",
-			boxShadow: "0 18px 60px rgba(0,0,0,.55)",
-		};
+		// ---- shared body ------------------------------------------------------
 		var INPUT_STYLE = {
 			flex: 1,
+			minWidth: 0,
 			boxSizing: "border-box",
 			padding: "8px 12px",
 			borderRadius: "10px",
@@ -210,13 +191,11 @@ window.__ModuleLoader__.load({
 			return Math.floor(days / 365) + " 年前";
 		}
 
-		function MarketplacePanel() {
+		function MarketplaceBody() {
 			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			var draft = useState("");
 			var query = draft[0];
 			var setQuery = draft[1];
-			if (!s.open) return null;
-			var close = () => store.patch({ open: false });
 
 			var chips = ["recommended", "plugin", "skill", "application", "infrastructure", "channel", "collection", "directory"];
 			var chipRow = chips.map((type) => {
@@ -224,6 +203,7 @@ window.__ModuleLoader__.load({
 				var count = type === "recommended" ? "" : s.counts[type];
 				return createElement("button", {
 					key: type,
+					type: "button",
 					style: { ...CHIP_STYLE, ...(s.type === type ? CHIP_ON_STYLE : {}) },
 					onClick: () => {
 						store.patch({ type });
@@ -257,6 +237,7 @@ window.__ModuleLoader__.load({
 								item.topics.map((topic) => createElement("span", { key: topic, style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", marginRight: "6px" } }, "#" + topic)))
 							: null),
 					createElement("button", {
+						type: "button",
 						style: ACT_STYLE,
 						disabled: s.busy || isInstalled || resolving,
 						onClick: () => install(item),
@@ -264,45 +245,173 @@ window.__ModuleLoader__.load({
 			});
 
 			var updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : "—";
-			return createElement("div", { style: PANEL_STYLE, onClick: (e) => { if (e.target === e.currentTarget) close(); } },
-				createElement("div", { style: CARD_STYLE },
-					createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" } },
-						createElement("div", { style: { fontSize: "15px", fontWeight: 600 } }, "插件市场"),
-						createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } },
-							createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)" } }, "目录更新 " + updated),
-							createElement("button", { style: ACT_STYLE, onClick: close }, "关闭"))),
-					createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" } },
-						createElement("input", {
-							style: INPUT_STYLE,
-							placeholder: "搜索名称、作者、描述或标签",
-							value: query,
-							onChange: (e) => setQuery(e.target.value),
-							onKeyDown: (e) => {
-								if (e.key === "Enter") {
-									store.patch({ query });
-									runSearch(query, s.type, s.sort);
-								}
-							},
-						}),
-						createElement("button", { style: ACT_STYLE, disabled: s.busy, onClick: () => { store.patch({ query }); runSearch(query, s.type, s.sort); } }, "搜索"),
-						createElement("select", {
-							style: { ...ACT_STYLE, borderRadius: "8px" },
-							value: s.sort,
-							onChange: (e) => { store.patch({ sort: e.target.value }); runSearch(query, s.type, e.target.value); },
+			return createElement("div", { style: { display: "flex", flexDirection: "column", gap: "8px", color: "var(--dsw-alias-label-primary, #e6ecff)" } },
+				createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+					createElement("input", {
+						style: INPUT_STYLE,
+						placeholder: "搜索名称、作者、描述或标签",
+						value: query,
+						onChange: (e) => setQuery(e.target.value),
+						onKeyDown: (e) => {
+							if (e.key === "Enter") {
+								store.patch({ query });
+								runSearch(query, s.type, s.sort);
+							}
 						},
-							createElement("option", { value: "score" }, "综合推荐"),
-							createElement("option", { value: "stars" }, "最多 Star"),
-							createElement("option", { value: "updated" }, "最近更新")),
-						createElement("button", { style: ACT_STYLE, disabled: s.busy, onClick: () => { store.patch({ open: false }); window.location.reload(); } }, "刷新界面")),
-					createElement("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" } }, chipRow),
-					createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", marginBottom: "6px" } }, s.note),
-					rows.length > 0 ? rows : createElement("div", { style: { fontSize: "12px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "18px 4px" } }, s.busy ? "加载中…" : "输入关键词回车，或切换上方分类浏览目录。"),
-					s.installed.length > 0
-						? createElement("div", { style: { marginTop: "12px", borderTop: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", paddingTop: "8px" } },
-							createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px" } }, "已安装（宿主运行时挂载）"),
-							s.installed.map((pkg) => createElement("div", { key: pkg, style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "3px 4px" } }, "· " + pkg)))
-						: null));
+					}),
+					createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => { store.patch({ query }); runSearch(query, s.type, s.sort); } }, "搜索"),
+					createElement("select", {
+						style: { ...ACT_STYLE, borderRadius: "8px" },
+						value: s.sort,
+						onChange: (e) => { store.patch({ sort: e.target.value }); runSearch(query, s.type, e.target.value); },
+					},
+						createElement("option", { value: "score" }, "综合推荐"),
+						createElement("option", { value: "stars" }, "最多 Star"),
+						createElement("option", { value: "updated" }, "最近更新")),
+					createElement("button", { type: "button", style: ACT_STYLE, disabled: s.busy, onClick: () => window.location.reload() }, "刷新界面")),
+				createElement("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } }, chipRow),
+				createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", minHeight: "14px" } },
+					s.note || "目录更新 " + updated + " · 安装即写入会话配置，界面新元素刷新后生效"),
+				rows.length > 0 ? rows : createElement("div", { style: { fontSize: "12px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "18px 4px" } }, s.busy ? "加载中…" : "输入关键词回车，或切换上方分类浏览目录。"),
+				s.installed.length > 0
+					? createElement("div", { style: { marginTop: "12px", borderTop: "1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.06))", paddingTop: "8px" } },
+						createElement("div", { style: { fontSize: "12px", fontWeight: 600, marginBottom: "4px" } }, "已安装（宿主运行时挂载）"),
+						s.installed.map((pkg) => createElement("div", { key: pkg, style: { fontSize: "11px", color: "var(--dsw-alias-label-tertiary, #93a5d8)", padding: "3px 4px" } }, "· " + pkg)))
+					: null);
 		}
+
+		// ---- settings-native section ------------------------------------------
+		// Renders inside the built-in 设置 modal: identical chrome (nav rail,
+		// content column, close/Escape/mask) with zero duplicated panel styling.
+		function MarketplaceSection() {
+			useEffect(() => {
+				refreshInstalled();
+				if (store.state.results.length === 0) runSearch(store.state.query, store.state.type, store.state.sort);
+			}, []);
+			return createElement(MarketplaceBody);
+		}
+
+		// ---- fallback overlay (mirrors the settings modal geometry) -----------
+		var FALLBACK_OVERLAY_STYLE = {
+			zIndex: 1200,
+			justifyContent: "center",
+			alignItems: "center",
+			display: "flex",
+			position: "fixed",
+			inset: "0",
+			pointerEvents: "auto",
+		};
+		var FALLBACK_MASK_STYLE = {
+			background: "var(--dsw-alias-bg-mask-1, rgba(5,8,18,.45))",
+			backdropFilter: "var(--dsw-mask-blur, blur(4px))",
+			position: "absolute",
+			inset: "0",
+		};
+		var FALLBACK_PANEL_STYLE = {
+			zIndex: 1,
+			background: "var(--dsw-alias-bg-layer-2, #101828)",
+			width: "800px",
+			maxWidth: "calc(100vw - 48px)",
+			height: "min(800px, 100vh - 48px)",
+			boxShadow: "var(--dsw-shadow-lv3, 0 18px 60px rgba(0,0,0,.55))",
+			borderRadius: "24px",
+			display: "flex",
+			flexDirection: "column",
+			position: "relative",
+			overflow: "hidden",
+		};
+		var FALLBACK_HEADER_STYLE = {
+			boxSizing: "border-box",
+			flex: "none",
+			justifyContent: "space-between",
+			alignItems: "flex-start",
+			gap: "8px",
+			height: "54px",
+			padding: "20px 14px 8px 10px",
+			display: "flex",
+		};
+		var FALLBACK_OPTIONS_STYLE = {
+			flex: 1,
+			minHeight: 0,
+			padding: "0 24px 24px",
+			overflowY: "auto",
+			display: "flex",
+			flexDirection: "column",
+		};
+
+		function MarketplacePanel() {
+			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			useEffect(() => {
+				if (!s.open) return;
+				var onKeyDown = (e) => { if (e.key === "Escape") store.patch({ open: false }); };
+				document.addEventListener("keydown", onKeyDown);
+				refreshInstalled();
+				if (store.state.results.length === 0) runSearch(store.state.query, store.state.type, store.state.sort);
+				return () => document.removeEventListener("keydown", onKeyDown);
+			}, [s.open]);
+			if (!s.open) return null;
+			return createElement("div", { style: FALLBACK_OVERLAY_STYLE },
+				createElement("div", { style: FALLBACK_MASK_STYLE, onClick: () => store.patch({ open: false }) }),
+				createElement("div", { style: FALLBACK_PANEL_STYLE, role: "dialog", "aria-modal": "true" },
+					createElement("div", { style: FALLBACK_HEADER_STYLE },
+						createElement("div", { style: { color: "var(--dsw-alias-label-primary, #e6ecff)", fontSize: "16px", fontWeight: 500, lineHeight: "24px" } }, "插件市场"),
+						createElement("button", {
+							type: "button",
+							style: { cursor: "pointer", width: "28px", height: "28px", color: "var(--dsw-alias-label-primary, #e6ecff)", background: "transparent", border: "none", borderRadius: "28px", justifyContent: "center", alignItems: "center", padding: 0, display: "inline-flex", fontSize: "14px" },
+							onClick: () => store.patch({ open: false }),
+							"aria-label": "关闭",
+						}, "✕")),
+					createElement("div", { style: FALLBACK_OPTIONS_STYLE },
+						createElement(MarketplaceBody))));
+		}
+
+		// ---- opener -----------------------------------------------------------
+		// Preferred route: click the built-in 设置 trigger, then select the
+		// marketplace section in its nav rail — the panel then IS the settings
+		// panel. Falls back to the local overlay when the shell route is missing.
+		function findFootArea(anchor) {
+			var wrapper = null;
+			if (anchor && anchor.closest) wrapper = anchor.closest('[data-slot="sidebar.footer.action"]');
+			if (wrapper === null) wrapper = document.querySelector('[data-slot="sidebar.footer.action"]');
+			return wrapper && wrapper.parentElement ? wrapper.parentElement.parentElement : null;
+		}
+
+		function openMarketplace(anchor) {
+			var footArea = findFootArea(anchor);
+			var trigger = footArea ? footArea.querySelector('button[aria-haspopup="dialog"]') : null;
+			if (trigger === null) {
+				store.patch({ open: true });
+				return;
+			}
+			trigger.click();
+			var attempts = 0;
+			var tryNav = function () {
+				var dlg = document.querySelector('[role="dialog"][aria-modal="true"]');
+				if (dlg === null) return null;
+				var cells = dlg.querySelectorAll("nav button");
+				for (var i = 0; i < cells.length; i++) {
+					if ((cells[i].textContent || "").indexOf("插件市场") !== -1) {
+						cells[i].click();
+						return true;
+					}
+				}
+				return false; // dialog open but section missing
+			};
+			var r = tryNav();
+			if (r === true) return;
+			if (r === false) { store.patch({ open: true }); return; }
+			var timer = setInterval(() => {
+				attempts++;
+				var r2 = tryNav();
+				if (r2 === true) clearInterval(timer);
+				else if (r2 === false || attempts > 12) {
+					clearInterval(timer);
+					store.patch({ open: true });
+				}
+			}, 100);
+		}
+
+		window.addEventListener("dsh-marketplace-open", () => openMarketplace(null));
 
 		function apply(ctx) {
 			ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
@@ -312,6 +421,13 @@ window.__ModuleLoader__.load({
 				label: "插件市场",
 				inject: () => ({}),
 			}, MarketplaceButton));
+			ctx.slots.inject("settings.section", () => ctx.slots.register({
+				name: "settings.section",
+				id: "marketplace",
+				order: 90,
+				label: "插件市场",
+				inject: (owner) => ({ close: owner && owner.close }),
+			}, MarketplaceSection));
 			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
 				name: "shell.overlay",
 				id: "marketplace-panel",
@@ -319,12 +435,13 @@ window.__ModuleLoader__.load({
 				label: "插件市场",
 				inject: () => ({}),
 			}, MarketplacePanel));
-			console.log("[dsh-desktop] marketplace mounted (catalog-first)");
+			console.log("[dsh-desktop] marketplace mounted (settings-native)");
 		}
 
 		exports.apply = apply;
 		exports.inject = ["slots"];
 		exports.MarketplaceButton = MarketplaceButton;
+		exports.MarketplaceSection = MarketplaceSection;
 		exports.MarketplacePanel = MarketplacePanel;
 		return module.exports;
 	}

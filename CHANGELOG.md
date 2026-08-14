@@ -4,6 +4,17 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.4.1] — 2026-08-14
+
+### Changed
+
+- **Marketplace now lives inside the built-in 设置 panel**: it registers as a real `settings.section` page, so it shares the exact settings chrome (left nav rail, content column, close/Escape/mask). The sidebar entry is styled like the 设置 trigger row. The old overlay remains only as an automatic fallback when the settings shell route is unavailable.
+- **File-changes button moved next to the view tabs**: it now sits in the 对话/轨迹 tab row instead of the far-right header corner.
+
+### Fixed
+
+- **White "paper" desktop/taskbar icons**: the 296-character app description overflowed NSIS's shortcut writer and corrupted the `.lnk` icon-location string, so Windows fell back to the generic white icon. The description is shortened, and a custom NSIS `customInstall` step rewrites both shortcuts with valid icon data on every install and update (heals already-affected installs on upgrade).
+
 ## [0.4.0] — 2026-08-14
 
 ### Added

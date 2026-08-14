@@ -7,6 +7,9 @@ window.__ModuleLoader__.load({
 		var createElement = React.createElement;
 		var useSyncExternalStore = React.useSyncExternalStore;
 		var useEffect = React.useEffect;
+		var useLayoutEffect = React.useLayoutEffect;
+		var useRef = React.useRef;
+		var useState = React.useState;
 
 		// Module-wide store: header button + overlay panel share it.
 		var store = {
@@ -64,8 +67,25 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ---- header utility button ------------------------------------------
-		var HEADER_BTN_STYLE = {
+		// ---- header button ----------------------------------------------------
+		// Registered in the title-adjacent action row, then physically moved into
+		// the view-tab row (对话 / 轨迹) so it sits right next to the tabs. The
+		// move is DOM-level (the shell offers no slot inside the tab row) and is
+		// kept reversible: on unmount the button returns to its holder span first,
+		// so React can remove it cleanly.
+		var TAB_BTN_STYLE = {
+			display: "inline-block",
+			color: "var(--dsw-alias-label-tertiary, #93a5d8)",
+			cursor: "pointer",
+			background: "transparent",
+			border: "none",
+			padding: "0 0 11px",
+			fontSize: "13px",
+			fontWeight: 500,
+			lineHeight: "16px",
+			position: "relative",
+		};
+		var CHIP_BTN_STYLE = {
 			display: "inline-flex",
 			alignItems: "center",
 			gap: "4px",
@@ -81,19 +101,59 @@ window.__ModuleLoader__.load({
 		function FileChangesButton(props) {
 			var s = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			var sessionId = props.sessionId;
+			var holderRef = useRef(null);
+			var btnRef = useRef(null);
+			var inTabsDraft = useState(false);
+			var inTabs = inTabsDraft[0];
+			var setInTabs = inTabsDraft[1];
 			useEffect(() => {
 				if (typeof sessionId === "string" && sessionId !== "") loadChanges(sessionId);
 			}, [sessionId]);
+			useLayoutEffect(() => {
+				var btn = btnRef.current;
+				var holder = holderRef.current;
+				if (btn === null || holder === null) return;
+				var header = null;
+				var tabs = null;
+				var ensure = function () {
+					if (header === null || !document.contains(header)) {
+						header = holder.closest("header");
+						tabs = null;
+					}
+					if (tabs === null || !document.contains(tabs)) {
+						tabs = header === null ? null : header.querySelector('[role="tablist"]');
+					}
+					var next = tabs !== null;
+					if (next) {
+						if (btn.parentElement !== tabs) { try { tabs.appendChild(btn); } catch (_) {} }
+					} else if (btn.parentElement !== holder) {
+						try { holder.appendChild(btn); } catch (_) {}
+					}
+					setInTabs((prev) => (prev === next ? prev : next));
+				};
+				ensure();
+				var mo = header !== null && typeof MutationObserver !== "undefined" ? new MutationObserver(ensure) : null;
+				if (mo !== null) mo.observe(header, { childList: true });
+				var iv = setInterval(ensure, 1500);
+				return () => {
+					if (mo !== null) mo.disconnect();
+					clearInterval(iv);
+					if (btn.parentElement !== holder) { try { holder.appendChild(btn); } catch (_) {} }
+				};
+			}, []);
 			var count = typeof sessionId === "string" && sessionId === store.state.sessionId ? store.state.changes.length : 0;
-			return createElement("button", {
-				style: HEADER_BTN_STYLE,
-				title: "本会话文件改动",
-				onClick: () => {
-					if (typeof sessionId !== "string" || sessionId === "") return;
-					store.patch({ open: true, sessionId });
-					loadChanges(sessionId);
-				},
-			}, "文件" + (count > 0 ? " (" + count + ")" : ""));
+			return createElement("span", { ref: holderRef, style: { display: "contents" } },
+				createElement("button", {
+					ref: btnRef,
+					type: "button",
+					style: inTabs ? TAB_BTN_STYLE : CHIP_BTN_STYLE,
+					title: "本会话文件改动",
+					onClick: () => {
+						if (typeof sessionId !== "string" || sessionId === "") return;
+						store.patch({ open: true, sessionId });
+						loadChanges(sessionId);
+					},
+				}, "文件" + (count > 0 ? " (" + count + ")" : "")));
 		}
 
 		// ---- overlay panel ----------------------------------------------------
@@ -179,8 +239,8 @@ window.__ModuleLoader__.load({
 		}
 
 		function apply(ctx) {
-			ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
-				name: "conversation.session.header.utilities",
+			ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
+				name: "conversation.session.header.actions",
 				id: "file-changes",
 				order: 10,
 				label: "文件改动",

@@ -2,7 +2,7 @@
   "name": "dsh-desktop",
   "productName": "DeepSeek Harness Desktop",
   "version": "0.4.0",
-  "description": "DeepSeek Harness packaged as an Electron desktop application: the host composition boots in-process in the Electron main process, the built frontend loads from the local file system, and the /api fetch plus event downlinks cross an Electron IPC bridge (no browser, no port, no local HTTP server).",
+  "description": "DeepSeek Harness as a desktop app: host boots in-process inside Electron, the built frontend loads locally, and API plus event traffic crosses an IPC bridge (no port, no local HTTP server).",
   "type": "module",
   "main": "src/main.mjs",
   "license": "MIT",
@@ -65,6 +65,7 @@
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "shortcutName": "DeepSeek Harness Desktop",
+      "include": "build/installer.nsh",
       "artifactName": "DeepSeek-Harness-Desktop-Setup-${version}.${ext}"
     },
     "portable": {

@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DeepSeek Harness Desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "DeepSeek Harness as a desktop app: host boots in-process inside Electron, the built frontend loads locally, and API plus event traffic crosses an IPC bridge (no port, no local HTTP server).",
   "type": "module",
   "main": "src/main.mjs",

@@ -4,6 +4,12 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.6.1] — 2026-08-15
+
+### Fixed
+
+- **Sidebar tab bar hidden under the desktop chrome**: the built-in sidebar's "position compat mode" (`titleBarCompat`) is now **on by default** — the sidebar toggle buttons and the tab bar (Explorer / Git / Terminal / Subagent / Browser) are pushed down clear of the app's 36px glass title bar, so new tabs are reachable out of the box. The strip height stays tunable (Settings → Side card → gear, 0–120px). Only affects profiles that have not persisted the pref; existing saved values win.
+
 ## [0.6.0] — 2026-08-15
 
 ### Added

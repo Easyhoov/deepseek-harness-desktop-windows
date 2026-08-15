@@ -41,6 +41,15 @@ dsh-better-sidebar 原本是 `dsh web` 的插件：host 半在 HTTP webserver �
   安装，`auto-install-peers=false`；node-pty 的构建脚本被 pnpm 拦截也无妨——加载走
   NAPI 预编译）。
 
+### 桌面默认值调整
+
+- **位置兼容模式（`titleBarCompat`）默认开启**：desktop 有自绘 36px 顶部标题栏，
+  关闭该模式时侧边栏按钮与 Tab 栏会被标题栏遮挡、点不到。下移距离默认 40px
+  （`TITLE_BAR_STRIP_DEFAULT`），可在 设置 → 侧边卡片 的齿轮弹窗中调整（0–120px）。
+  改动位置：fork 源码 `src/prefs-shared.ts`（`SIDEBAR_PREFS_DEFAULTS`）与
+  `src/config.ts`（`PrefsSchema`）。注意：设置持久化后以已存值为准，默认值只影响
+  未持久化过该键的 profile。
+
 ## 已知限制（桌面版）
 
 - HTML 预览与内嵌浏览器沙箱在 Electron 渲染进程内行为与浏览器一致；`X-Frame-Options`

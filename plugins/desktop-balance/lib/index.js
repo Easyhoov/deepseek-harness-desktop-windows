@@ -119,17 +119,43 @@ export function apply(ctx) {
 
 	// Usage fold over the live session event stream (same buckets as the
 	// shipped tokenUsage projection; kept per-turn by resetting on turn/end).
+	//
+	// A step's usage is reported TWICE on the log: the stream's usage chunk
+	// (`assistant/chunk` type='usage') arrives first, then `assistant/message`
+	// carries the same final usage for that (turn, step) — and a retried
+	// request re-reports usage for the same (turn, step) as well. Folding both
+	// verbatim would double-count every step, so a repeated sample for the
+	// same (session, turn, step) REPLACES the earlier one instead of adding
+	// (same contract as the shipped tokenUsage projection).
+	let lastSample = null; // { sessionId, turn, step, buckets }
 	const offEvents = ctx.on('session/event', (session, event) => {
 		const usage = usageOf(event);
 		if (usage !== undefined) {
+			const { turn, step } = event.data;
 			const buckets = bucketsOf(usage);
-			perSession.miss += buckets.miss;
-			perSession.hit += buckets.hit;
-			perSession.out += buckets.out;
-			const turn = event.data?.turn;
-			if (turn !== undefined) {
+			const replacing = lastSample !== null
+				&& lastSample.sessionId === session.id
+				&& lastSample.turn === turn
+				&& lastSample.step === step;
+			if (replacing) {
+				// Same (session, turn, step) re-reported: swap the old sample out.
+				const delta = {
+					miss: buckets.miss - lastSample.buckets.miss,
+					hit: buckets.hit - lastSample.buckets.hit,
+					out: buckets.out - lastSample.buckets.out,
+				};
+				perSession.miss += delta.miss;
+				perSession.hit += delta.hit;
+				perSession.out += delta.out;
+				if (currentTurn.turn === turn) currentTurn.cost += costYuan(delta);
+				lastSample.buckets = buckets;
+			} else {
+				perSession.miss += buckets.miss;
+				perSession.hit += buckets.hit;
+				perSession.out += buckets.out;
 				if (currentTurn.turn !== turn) currentTurn = { turn, cost: 0 };
 				currentTurn.cost += costYuan(buckets);
+				lastSample = { sessionId: session.id, turn, step, buckets };
 			}
 		}
 		if (event.type === 'turn/end') push();

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-desktop/balance",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek account balance widget for the desktop app: ¥ balance + per-turn cost estimate in the composer dock, click to top up.",
   "type": "module",
   "main": "lib/index.js",

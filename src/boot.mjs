@@ -29,7 +29,7 @@ import {
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline';
-import { addPlugins, removePlugin } from './dsh-runner.mjs';
+import { addPlugins, removePlugin, startPnpm } from './dsh-runner.mjs';
 
 /** This app's install anchor: the dsh CLI package.json inside our node_modules. */
 export const INSTALL_ANCHOR = (() => {
@@ -78,6 +78,9 @@ const DESKTOP_PATCHES = parseYaml(readFileSync(DESKTOP_PATCH_PATH, 'utf8'));
 const DESKTOP_BUNDLES = [
 	{ id: '@dsh-desktop/balance', dir: 'desktop-balance' },
 	{ id: '@dsh-desktop/file-changes', dir: 'desktop-file-changes' },
+	// Vendored dsh-better-sidebar (right sidebar workbench): explorer /
+	// editor / git / browser / terminal / subagent tabs, per-session.
+	{ id: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
 	// The marketplace plugin is retired: the ZASENJC dsh-plugin-store bundle
 	// (installed by the user into the profile) replaces it.
 ];
@@ -138,6 +141,23 @@ async function ensureDesktopBundles(profileDir) {
 }
 
 /**
+ * Install the vendored plugin's runtime dependencies into its own
+ * node_modules. The desktop bundles are `link:`-installed, so bare imports
+ * in a linked package resolve from the package's REAL directory — the
+ * plugin's deps (ws / schemastery / node-pty) must live beside it, not in
+ * the profile. node_modules is git-ignored; this is the one-time bootstrap.
+ */
+async function ensureVendorDeps(vendorDir, { logLine }) {
+	if (existsSync(join(vendorDir, 'node_modules', '.modules.yaml'))) return;
+	logLine(`vendored plugin deps missing; installing into ${vendorDir}…`);
+	const task = startPnpm(['install', '--prod', '--no-frozen-lockfile'], { cwd: vendorDir, logLine });
+	const res = await task.done;
+	if (res.code !== 0) {
+		logLine(`vendored plugin deps install failed: ${(res.stderr || res.stdout || '').slice(-800)}`);
+	}
+}
+
+/**
  * Boot the shipped web profile in-process with the desktop overlay.
  * @param {object} options
  * @param {object} options.webServer - the in-process webServer stub provided in prepare.
@@ -145,7 +165,7 @@ async function ensureDesktopBundles(profileDir) {
  * @param {(code: number) => void} options.onExit - app exit requested by a booted app.
  * @returns {Promise<import('@deepseek-ai/cordis').Context>} the settled root context.
  */
-export async function bootDesktop({ webServer, directoryPicker, desktopUi, overlayAnchor, onExit }) {
+export async function bootDesktop({ webServer, directoryPicker, desktopUi, overlayAnchor, onExit, logLine }) {
 	// A user-installed overlay release of @deepseek-ai/dsh takes precedence
 	// over the bundled copy: the healed fallback junctions and the bundle
 	// resolution both follow this anchor, so the whole composition boots
@@ -160,6 +180,10 @@ export async function bootDesktop({ webServer, directoryPicker, desktopUi, overl
 	const bootProfile = loadProfile(NAME, 'web', anchor, undefined, { userLayer: true });
 	writeFileSync(join(bootProfile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG);
 	await ensureDesktopBundles(bootProfile.dir);
+	// The vendored better-sidebar ships without node_modules (git-ignored);
+	// bootstrap its runtime deps on first run.
+	const sidebarVendorDir = join(PLUGINS_ROOT, 'dsh-better-sidebar');
+	await ensureVendorDeps(sidebarVendorDir, { logLine });
 	const profile = loadProfile(NAME, 'web', anchor, undefined, { userLayer: true });
 	if (desktopUi !== undefined) {
 		desktopUi.profileDir = profile.dir;

@@ -76,6 +76,11 @@ export function createIpcWebServer() {
 			return out;
 		},
 
+		/** Exact lookup in the upgrade table (WebSocket upgrade paths). */
+		matchUpgrade(pathname) {
+			return upgrades.get(pathname);
+		},
+
 		/** Longest-prefix-wins over the prefix table after an exact-table miss. */
 		match(pathname) {
 			const hit = exact.get(pathname);

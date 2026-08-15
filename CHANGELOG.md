@@ -4,6 +4,23 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.6.0] — 2026-08-15
+
+### Added
+
+- **Built-in sidebar workbench (vendored [dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) v0.12.2)**: a VSCode-like right sidebar + bottom panel per conversation — file explorer, CodeMirror editor with image/Markdown/HTML/PDF preview, real PowerShell terminal, Git panel (diff/history/stage/commit), sandboxed embedded browser, subagent topology and background jobs. Shipped as a desktop bundle (`plugins/dsh-better-sidebar/`), auto-installed into the profile on first boot like the other desktop bundles; no user setup.
+- **Generic WebSocket-over-IPC bridge for the desktop carrier** (`src/ws-ipc.mjs` + `ipc-bridge.mjs` + `preload.cjs`): any loopback WebSocket now rides a full-duplex IPC channel (RFC 6455 frame codec + mock duplex for the in-process `ws` servers), with a ready-ack so early frames (transcript replays) are never lost. Plugin upgrade routes such as `/sidebar/ws/terminal` work unchanged.
+- **`app://` protocol dispatches webServer routes first** (`main.mjs`): `<img>`/`<iframe>`/lazy-chunk `<script>`/download requests to `/sidebar/*` are served in-process instead of 404'ing against the static site.
+- **First-boot vendored-deps bootstrap** (`boot.mjs` `ensureVendorDeps`): the plugin's runtime deps (ws / schemastery / node-pty) install into the plugin directory via the bundled pnpm (node_modules stays out of the repo).
+
+### Changed
+
+- The better-sidebar fork defers node-pty loading (`src/pty-manager.ts` / `src/agent-pty.ts`) so a platform without a usable pty binary degrades to a clear terminal error instead of taking down the plugin; the NAPI prebuilt (node-pty ≥ 1.1) loads under Electron as-is.
+
+### Fixed
+
+- Terminal connection bugs surfaced during desktop bring-up: the WebSocket shim now supports classic `socket.onopen/onmessage/...` property handlers, and the bridge buffers pre-ready frames (reconnect transcript replay) — both previously left the terminal stuck on "connecting".
+
 ## [0.5.6] — 2026-08-14
 
 ### Added

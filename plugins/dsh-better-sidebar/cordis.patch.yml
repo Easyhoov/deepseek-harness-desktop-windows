@@ -1,0 +1,8 @@
+# dsh-better-sidebar bundle patch (desktop vendor)
+
+# Same single `insert` as the upstream npm channel: when the desktop boot's
+# ensureDesktopBundles installs this bundle into the profile, this layer
+# mounts the plugin row. Keep in sync with src/index.ts `name`.
+- insert:
+    - id: better-sidebar
+      name: 'dsh-better-sidebar'

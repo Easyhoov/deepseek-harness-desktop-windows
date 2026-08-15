@@ -17,10 +17,21 @@
  *
  * @module dsh-desktop/ipc-bridge
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import {
+	createMockSocket,
+	encodeClientFrame,
+	ServerFrameDecoder,
+	OP_BINARY,
+	OP_CLOSE,
+	OP_PING,
+	OP_TEXT,
+} from './ws-ipc.mjs';
 
 const MUX_EVENTS_PATH = '/api/events.mux';
 const HOST_EVENTS_PATH = '/api/events.host';
+/** Cap on one renderer→main WebSocket payload (terminal keystrokes are tiny). */
+const MAX_WS_SEND_BYTES = 1 << 20;
 
 /** Wire shapes mirrored from @deepseek-ai/dsh-client-connection's node half. */
 function serverRequest(frame) {
@@ -43,7 +54,7 @@ function failureFrame(error) {
 }
 
 /** Minimal IncomingMessage stand-in for the bridge inside route handlers. */
-function createMockRequest({ url, method, headers, body }) {
+export function createMockRequest({ url, method, headers, body }) {
 	let destroyed = false;
 	return {
 		method,
@@ -61,12 +72,11 @@ function createMockRequest({ url, method, headers, body }) {
 	};
 }
 
-/**
- * Minimal ServerResponse stand-in: writeHead/write/end plus close/drain
- * events. Optional callbacks turn writes/ends/headers into carrier events
- * for the chunked response protocol.
- */
-function createMockResponse({ onChunk, onEnd, onHeaders } = {}) {
+/** Minimal ServerResponse stand-in: writeHead/write/end plus close/drain
+ *  events. Optional callbacks turn writes/ends/headers into carrier events
+ *  for the chunked response protocol. Exported for the app:// protocol
+ *  handler, which dispatches webServer routes with the same mocks. */
+export function createMockResponse({ onChunk, onEnd, onHeaders } = {}) {
 	const listeners = new Map();
 	const res = {
 		statusCode: 200,
@@ -274,12 +284,129 @@ export function installIpcBridge({ ctx, webServer, getWindow, ipcMain, logLine }
 		pending.req.destroy();
 	};
 
-	// ---- downlink: event streams over IPC ---------------------------------
+	// ---- downlink: event streams + generic duplex WebSockets over IPC ----
+	// The two shipped event streams keep their dedicated apiProxy pumps
+	// (downlink-only). Every other loopback WebSocket is a generic duplex
+	// session: the renderer shim deals in messages, while this side encodes
+	// them into RFC 6455 client frames and feeds the registered upgrade
+	// route's mock socket; bytes the ws machinery writes are decoded back
+	// into renderer messages (see ws-ipc.mjs).
+	const wsSessions = new Map(); // streamId -> { senderId, socket, decoder, closed }
+
+	const sendWsFrame = (sender, streamId, data) => {
+		try {
+			sender.send('dsh:ws-frame', { streamId, data });
+		} catch {
+			/* sender gone */
+		}
+	};
+
+	const openGenericWs = async (event, { streamId, path }) => {
+		if (typeof path !== 'string') return { ok: false, reason: 'bad request shape' };
+		let url;
+		try {
+			url = new URL(path, 'http://dsh.internal');
+		} catch {
+			return { ok: false, reason: 'bad stream path' };
+		}
+		const route = webServer.matchUpgrade(url.pathname);
+		if (route === undefined) return { ok: false, reason: `unknown stream ${url.pathname}` };
+		if (wsSessions.has(streamId)) return { ok: false, reason: 'duplicate stream id' };
+		const decoder = new ServerFrameDecoder();
+		// Server→renderer frames buffer until the shim acknowledges readiness
+		// ('dsh:ws-ready' — the renderer attaches its frame listener only
+		// after the invoke reply, so early frames — e.g. a reconnect's
+		// transcript replay sent synchronously inside the upgrade handler —
+		// would otherwise be lost; same handshake the fetch path uses).
+		const session = {
+			senderId: event.sender.id,
+			decoder,
+			closed: false,
+			live: false,
+			pending: [],
+			pendingBytes: 0,
+		};
+		const PENDING_CAP = 4 * 1024 * 1024;
+		const deliver = (payload) => {
+			if (session.live) {
+				sendWsFrame(event.sender, streamId, payload);
+				return;
+			}
+			session.pending.push(payload);
+			session.pendingBytes += typeof payload === 'string' ? payload.length : payload.byteLength;
+			while (session.pendingBytes > PENDING_CAP && session.pending.length > 1) {
+				const dropped = session.pending.shift();
+				session.pendingBytes -= typeof dropped === 'string' ? dropped.length : dropped.byteLength;
+			}
+		};
+		let handshaken = false;
+		const socket = createMockSocket({
+			onWrite(buffer) {
+				decoder.push(buffer);
+				if (!handshaken) {
+					if (!decoder.consumeHandshake()) return; // still the 101 response
+					handshaken = true;
+				}
+				for (const ev of decoder.drain()) {
+					if (ev.type === 'message') {
+						const data = ev.opcode === OP_TEXT
+							? ev.data.toString('utf8')
+							: ev.data.buffer.slice(ev.data.byteOffset, ev.data.byteOffset + ev.data.byteLength);
+						deliver(data);
+					} else if (ev.type === 'ping') {
+						// The browser shim never sees pings; answer server pings
+						// with a masked pong, like any client frame.
+						socket.feed(encodeClientFrame(ev.data, OP_PONG));
+					} else if (ev.type === 'close') {
+						deliver({ closed: true, code: ev.code, reason: ev.reason });
+						session.closed = true;
+						wsSessions.delete(streamId);
+						socket.destroy();
+					}
+				}
+			},
+		});
+		session.socket = socket;
+		// Fabricate the upgrade request the ws server validates: loopback
+		// Host (the fence's loopback branch passes), a valid random
+		// Sec-WebSocket-Key, and no extensions (so no compression is
+		// negotiated and the frame stream stays plain).
+		const req = createMockRequest({
+			url: path,
+			method: 'GET',
+			headers: {
+				host: '127.0.0.1',
+				upgrade: 'websocket',
+				connection: 'Upgrade',
+				'sec-websocket-key': randomBytes(16).toString('base64'),
+				'sec-websocket-version': '13',
+			},
+			body: null,
+		});
+		console.log(`[dsh-desktop] ipc ws-open: ${url.pathname} (stream ${streamId})`);
+		logLine?.(`ipc ws-open: ${url.pathname} (stream ${streamId})`);
+		try {
+			route.handler(req, socket, Buffer.alloc(0));
+		} catch (error) {
+			socket.destroy();
+			return { ok: false, reason: String(error?.message ?? error) };
+		}
+		// ws servers write the 101 synchronously inside handleUpgrade; the
+		// microtask only gives async handlers a chance to refuse.
+		await new Promise((resolve) => queueMicrotask(resolve));
+		if (!handshaken || socket.destroyed || session.closed) {
+			wsSessions.delete(streamId);
+			return { ok: false, reason: 'upgrade refused' };
+		}
+		wsSessions.set(streamId, session);
+		return { ok: true };
+	};
+
 	const onWsOpen = async (event, { streamId, path }) => {
 		if (!isTrustedSender(event)) return { ok: false, reason: 'untrusted sender' };
 		if (apiProxy === undefined) return { ok: false, reason: 'no api gateway' };
 		if (path !== MUX_EVENTS_PATH && path !== HOST_EVENTS_PATH) {
-			return { ok: false, reason: `unknown stream ${path}` };
+			return openGenericWs(event, { streamId, path });
 		}
 		console.log(`[dsh-desktop] ipc ws-open: ${path} (stream ${streamId})`);
 		logLine?.(`ipc ws-open: ${path} (stream ${streamId})`);
@@ -319,9 +446,55 @@ export function installIpcBridge({ ctx, webServer, getWindow, ipcMain, logLine }
 		return { ok: true };
 	};
 
-	const onWsClose = (event, { streamId }) => {
+	/** Renderer ack: the shim attached its frame listener; flush buffered frames. */
+	const onWsReady = (event, { streamId }) => {
 		if (!isTrustedSender(event)) return;
+		const session = wsSessions.get(streamId);
+		if (session === undefined || session.senderId !== event.sender.id || session.live) return;
+		session.live = true;
+		for (const payload of session.pending) sendWsFrame(event.sender, streamId, payload);
+		session.pending = [];
+		session.pendingBytes = 0;
+	};
+
+	const onWsSend = (event, { streamId, data }) => {
+		if (!isTrustedSender(event)) return;
+		const session = wsSessions.get(streamId);
+		if (session === undefined || session.senderId !== event.sender.id || session.closed) return;
+		let buffer;
+		let text = false;
+		if (typeof data === 'string') {
+			buffer = Buffer.from(data, 'utf8');
+			text = true;
+		} else if (data instanceof ArrayBuffer) {
+			buffer = Buffer.from(new Uint8Array(data));
+		} else if (ArrayBuffer.isView(data)) {
+			buffer = Buffer.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+		} else {
+			return;
+		}
+		if (buffer.byteLength > MAX_WS_SEND_BYTES) return;
+		session.socket.feed(encodeClientFrame(buffer, text ? OP_TEXT : OP_BINARY));
+	};
+
+	const onWsClose = (event, { streamId, code, reason }) => {
+		if (!isTrustedSender(event)) return;
+		// The shipped event streams abort their apiProxy pump.
 		wsPumps.get(event.sender.id)?.get(streamId)?.abort();
+		const session = wsSessions.get(streamId);
+		if (session === undefined || session.senderId !== event.sender.id || session.closed) return;
+		session.closed = true;
+		wsSessions.delete(streamId);
+		// Politely close the server side: close frame (masked, like any
+		// client frame) then a graceful end of the stream.
+		const closeCode = typeof code === 'number' && Number.isInteger(code) ? code : 1000;
+		const closeReason = typeof reason === 'string' ? reason : '';
+		const reasonBuf = Buffer.from(closeReason, 'utf8').subarray(0, 123);
+		const payload = Buffer.alloc(2 + reasonBuf.length);
+		payload.writeUInt16BE(closeCode, 0);
+		reasonBuf.copy(payload, 2);
+		session.socket.feed(encodeClientFrame(payload, OP_CLOSE));
+		session.socket.end();
 	};
 
 	const onSenderGone = (webContentsId) => {
@@ -330,6 +503,16 @@ export function installIpcBridge({ ctx, webServer, getWindow, ipcMain, logLine }
 			for (const abort of pumps.values()) abort.abort();
 			wsPumps.delete(webContentsId);
 		}
+		for (const [streamId, session] of [...wsSessions]) {
+			if (session.senderId === webContentsId) {
+				wsSessions.delete(streamId);
+				try {
+					session.socket.destroy();
+				} catch {
+					/* already gone */
+				}
+			}
+		}
 	};
 
 	const disposers = [];
@@ -337,14 +520,20 @@ export function installIpcBridge({ ctx, webServer, getWindow, ipcMain, logLine }
 	ipcMain.on('dsh:fetch-abort', onFetchAbort);
 	ipcMain.on('dsh:fetch-stream-ready', onFetchStreamReady);
 	ipcMain.handle('dsh:ws-open', onWsOpen);
+	ipcMain.on('dsh:ws-ready', onWsReady);
+	ipcMain.on('dsh:ws-send', onWsSend);
 	ipcMain.on('dsh:ws-close', onWsClose);
 	disposers.push(() => {
 		ipcMain.removeHandler('dsh:fetch');
 		ipcMain.removeListener('dsh:fetch-abort', onFetchAbort);
 		ipcMain.removeListener('dsh:fetch-stream-ready', onFetchStreamReady);
 		ipcMain.removeHandler('dsh:ws-open');
+		ipcMain.removeListener('dsh:ws-ready', onWsReady);
+		ipcMain.removeListener('dsh:ws-send', onWsSend);
 		ipcMain.removeListener('dsh:ws-close', onWsClose);
 		for (const abort of [...wsPumps.values()].flatMap((m) => [...m.values()])) abort.abort();
+		for (const session of wsSessions.values()) session.socket.destroy();
+		wsSessions.clear();
 	});
 
 	return {

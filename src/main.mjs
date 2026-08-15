@@ -26,7 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { extname, join } from 'node:path';
 import { createIpcWebServer } from './ipc-web-server.mjs';
 import { bootDesktop } from './boot.mjs';
-import { installIpcBridge } from './ipc-bridge.mjs';
+import { createMockRequest, createMockResponse, installIpcBridge } from './ipc-bridge.mjs';
 import { prepareSite } from './site.mjs';
 import { resolveHome, guardSharedHome } from './home.mjs';
 import { installNotifications } from './notifications.mjs';
@@ -100,6 +100,68 @@ const MIME_BY_EXT = {
 
 function contentTypeFor(pathname) {
 	return MIME_BY_EXT[extname(pathname).toLowerCase()] ?? 'application/octet-stream';
+}
+
+/**
+ * Run one webServer route in-process for an app:// protocol request and
+ * return its full buffered response (or null when the route declined to
+ * serve — the caller falls back to the static site).
+ * @param {object} route - a webServer route ({ kind, path, handler }).
+ * @param {Request} request - the Electron protocol Request.
+ * @param {URL} url - the parsed request URL.
+ * @returns {Promise<Response | null>}
+ */
+function dispatchAppRoute(route, request, url) {
+	return new Promise((resolve) => {
+		const headers = {};
+		for (const [key, value] of request.headers) headers[key] = value;
+		// The loopback Host keeps the plugin trust fences (Host-header
+		// loopback) happy, same as the IPC bridge does for renderer fetches.
+		headers.host = '127.0.0.1';
+		const chunks = [];
+		let settled = false;
+		const res = createMockResponse({
+			onChunk(chunk) {
+				chunks.push(chunk);
+			},
+			onEnd() {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				const body = chunks.length > 0 ? Buffer.concat(chunks) : null;
+				resolve(new Response(body, { status: res.statusCode, headers: res._headers }));
+			},
+		});
+		const req = createMockRequest({
+			url: url.pathname + url.search,
+			method: request.method,
+			headers,
+			body: null,
+		});
+		// Route responses under app:// are bounded (media, previews, chunk
+		// scripts); a route that streams forever would hang the protocol, so
+		// cap the wait and let the renderer surface its own error.
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			res.destroy();
+			resolve(new Response('route timeout', { status: 504 }));
+		}, 30_000);
+		void (async () => {
+			try {
+				await route.handler(req, res);
+			} catch (error) {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				if (!res.headersSent) {
+					resolve(new Response(`handler failure: ${String(error)}`, { status: 500 }));
+				} else {
+					res.end();
+				}
+			}
+		})();
+	});
 }
 
 const APP_NAME = 'DeepSeek Harness Desktop';
@@ -623,6 +685,7 @@ async function run() {
 		desktopUi,
 		overlayAnchor: overlayAnchor(app.getPath('userData')),
 		onExit: quitApp,
+		logLine,
 	});
 	logLine('boot ok');
 	installChromeIpc();
@@ -647,6 +710,16 @@ async function run() {
 		protocol.handle('app', async (request) => {
 			const url = new URL(request.url);
 			const pathname = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+			// Plugin routes (sidebar media, sandboxed HTML previews, lazy
+			// chunk scripts, plugin downloads) are dispatched in-process,
+			// exactly like IPC fetches: <img>, <script>, <iframe> and
+			// navigation never touch window.fetch, so only a protocol-level
+			// dispatch can reach them under app://.
+			const route = webServer.match(pathname);
+			if (route !== undefined && (request.method === 'GET' || request.method === 'HEAD')) {
+				const served = await dispatchAppRoute(route, request, url);
+				if (served !== null) return served;
+			}
 			try {
 				const data = await readFile(join(wwwDir, pathname));
 				return new Response(data, {

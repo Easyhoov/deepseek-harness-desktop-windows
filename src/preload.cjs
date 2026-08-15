@@ -22,6 +22,16 @@ function abortError() {
 	return new DOMException('This operation was aborted', 'AbortError');
 }
 
+/** Whether a URL targets the loopback authority (the carrier's own surface). */
+function isLoopbackUrl(parsed) {
+	const host = parsed.hostname.toLowerCase();
+	if (host === 'localhost' || host === '[::1]' || host === '::1') return true;
+	const parts = host.split('.');
+	return parts.length === 4
+		&& parts[0] === '127'
+		&& parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
 // ---------------------------------------------------------------------------
 // fetch shim: unary RPC, generic channels, HEAD probes — everything upstream.
 // Long-lived bodies stream as chunk frames after a ready handshake.
@@ -159,15 +169,26 @@ class IpcWebSocket extends EventTarget {
 		this._streamId = null;
 		this._offFrame = null;
 		this._closed = false;
+		this._duplex = false;
+		this._onHandlers = {};
+		this.onopen = null;
+		this.onmessage = null;
+		this.onclose = null;
+		this.onerror = null;
 
-		let pathname = '';
+		let parsed = null;
 		try {
-			pathname = new URL(this.url).pathname;
+			parsed = new URL(this.url);
 		} catch {
 			/* proxy below */
 		}
+		const pathname = parsed !== null ? parsed.pathname : '';
 		if (pathname === '/api/events.mux' || pathname === '/api/events.host') {
 			this._openIpc(pathname);
+		} else if (parsed !== null && isLoopbackUrl(parsed)) {
+			// Any other loopback WebSocket (plugin endpoints such as the
+			// sidebar terminal) rides the generic duplex IPC bridge.
+			this._openIpcDuplex(parsed);
 		} else {
 			this._proxyReal(url, protocols);
 		}
@@ -177,9 +198,49 @@ class IpcWebSocket extends EventTarget {
 		return this._readyState;
 	}
 
-	send() {
-		// Downlink-only protocol: the shipped client never sends frames.
-		if (this._real !== null) this._real.send(...arguments);
+	// Classic `socket.onopen = fn` API: property handlers must mirror
+	// addEventListener (EventTarget alone does not wire them up, and the
+	// sidebar terminal uses this style).
+	set onopen(fn) {
+		this._setOnHandler('open', fn);
+	}
+	get onopen() {
+		return this._onHandlers.open ?? null;
+	}
+	set onmessage(fn) {
+		this._setOnHandler('message', fn);
+	}
+	get onmessage() {
+		return this._onHandlers.message ?? null;
+	}
+	set onclose(fn) {
+		this._setOnHandler('close', fn);
+	}
+	get onclose() {
+		return this._onHandlers.close ?? null;
+	}
+	set onerror(fn) {
+		this._setOnHandler('error', fn);
+	}
+	get onerror() {
+		return this._onHandlers.error ?? null;
+	}
+
+	_setOnHandler(type, fn) {
+		const prev = this._onHandlers[type];
+		if (prev !== undefined && prev !== null) this.removeEventListener(type, prev);
+		this._onHandlers[type] = fn;
+		if (typeof fn === 'function') this.addEventListener(type, fn);
+	}
+
+	send(data) {
+		// Duplex IPC streams forward renderer messages to the host bridge;
+		// the shipped event streams are downlink-only (no-op, as before).
+		if (this._duplex && this._streamId !== null && this._readyState === WS_OPEN) {
+			ipcRenderer.send('dsh:ws-send', { streamId: this._streamId, data });
+			return;
+		}
+		if (this._real !== null) this._real.send(data);
 	}
 
 	close(code, reason) {
@@ -187,7 +248,7 @@ class IpcWebSocket extends EventTarget {
 		this._closed = true;
 		this._readyState = WS_CLOSED;
 		if (this._streamId !== null) {
-			ipcRenderer.send('dsh:ws-close', { streamId: this._streamId });
+			ipcRenderer.send('dsh:ws-close', { streamId: this._streamId, code, reason });
 			this._detachFrame();
 		}
 		if (this._real !== null) this._real.close(code, reason);
@@ -215,6 +276,55 @@ class IpcWebSocket extends EventTarget {
 			}
 			ipcRenderer.on('dsh:ws-frame', onFrame);
 			this._offFrame = () => ipcRenderer.removeListener('dsh:ws-frame', onFrame);
+			this._readyState = WS_OPEN;
+			this.dispatchEvent(new Event('open'));
+		} catch {
+			if (this._readyState !== WS_CLOSED) {
+				this._readyState = WS_CLOSED;
+				this.dispatchEvent(new Event('error'));
+			}
+		}
+	}
+
+	async _openIpcDuplex(parsed) {
+		this._streamId = ++wsSeq;
+		this._duplex = true;
+		const streamId = this._streamId;
+		const onFrame = (_event, payload) => {
+			if (payload.streamId !== streamId || this._readyState !== WS_OPEN) return;
+			if (payload.closed === true) {
+				this._detachFrame();
+				this._readyState = WS_CLOSED;
+				this.dispatchEvent(new CloseEvent('close', {
+					code: typeof payload.code === 'number' ? payload.code : 1006,
+					reason: typeof payload.reason === 'string' ? payload.reason : '',
+				}));
+				return;
+			}
+			const data = payload.data;
+			if (data instanceof ArrayBuffer && this.binaryType === 'blob') {
+				this.dispatchEvent(new MessageEvent('message', { data: new Blob([data]) }));
+			} else {
+				this.dispatchEvent(new MessageEvent('message', { data }));
+			}
+		};
+		try {
+			const path = parsed.pathname + parsed.search;
+			const result = await ipcRenderer.invoke('dsh:ws-open', { streamId, path });
+			if (this._closed || this._readyState === WS_CLOSED) {
+				ipcRenderer.send('dsh:ws-close', { streamId });
+				return;
+			}
+			if (result === undefined || result.ok !== true) {
+				this._readyState = WS_CLOSED;
+				this.dispatchEvent(new Event('error'));
+				return;
+			}
+			ipcRenderer.on('dsh:ws-frame', onFrame);
+			this._offFrame = () => ipcRenderer.removeListener('dsh:ws-frame', onFrame);
+			// Frames buffered by the bridge before this point (transcript
+			// replays sent synchronously during the upgrade) flush on this ack.
+			ipcRenderer.send('dsh:ws-ready', { streamId });
 			this._readyState = WS_OPEN;
 			this.dispatchEvent(new Event('open'));
 		} catch {

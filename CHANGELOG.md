@@ -4,6 +4,13 @@ All notable changes to DeepSeek Harness Desktop are documented here.
 Versioning follows the `package.json` version; GitHub Actions builds and
 publishes a Release (NSIS + portable + `latest.yml`) on every `v*` tag.
 
+## [0.6.2] — 2026-08-19
+
+### Changed
+
+- **Merged the official upstream persistent-bash fix**: `dsh-tool-bash-persistent` used to override PS1 to a private prompt while `dsh-terminal-bash` waits for its own `dsh> ` prompt — the mismatch disabled prompt-based readiness, so every command fell back to the 3.5s idle-silence settle. Official master keeps the backend's own prompt (`stty -echo` only); this is now applied to our bundled copy via `scripts/apply-official-patches.mjs` (idempotent, runs on `postinstall`/`predist`), so simple commands settle in milliseconds instead of 3.5 seconds. The fix survives fresh `npm ci` and carries into the packaged build.
+- **Boot self-healing for profile bundles**: if the profile manifest lists a bundle its node_modules cannot compose (interrupted pnpm run, non-bundle listed as a bundle), the boot now runs a `pnpm install` heal and drops still-broken ids from `dsh.profile.bundles` (dependencies kept) instead of failing loud — a broken plugin degrades to a log line rather than taking down the app.
+
 ## [0.6.1] — 2026-08-15
 
 ### Fixed

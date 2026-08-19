@@ -25,6 +25,8 @@ import {
 	loadOptionalPatches,
 	loadProfile,
 	PROFILE_PATCH_FILENAME,
+	resolveBundleDir,
+	resolveProfileDir,
 } from '@deepseek-ai/dsh-app-boot';
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment';
@@ -106,6 +108,66 @@ function resolveTelemetryPatch(disabledEnv, hasRow) {
 }
 
 /**
+ * One bundle's compose-readiness problem, or null when healthy: the package
+ * must resolve from an anchor and declare a `dsh.bundle` patch. Mirrors the
+ * two checks loadProfile fails loud on, so they can be healed before it runs.
+ */
+function bundleProblem(bundleId, anchor, profileDir) {
+	let dir;
+	try {
+		dir = resolveBundleDir(NAME, bundleId, anchor, profileDir);
+	} catch {
+		return 'not installed';
+	}
+	try {
+		const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+		return typeof pkg?.dsh?.bundle?.patch === 'string' ? null : 'declares no dsh.bundle';
+	} catch {
+		return 'unreadable package.json';
+	}
+}
+
+/**
+ * A profile manifest can get ahead of what its node_modules can compose: an
+ * interrupted pnpm run leaves a declared `link:` dependency unmaterialized,
+ * and a hand- or store-written manifest can list a package that is not a
+ * bundle at all. loadProfile fails loud on either BEFORE any repair logic
+ * runs, and the carrier would fatal-dialog on the raw error. Heal first —
+ * one bundled-pnpm install when something is unresolved (the exact advice the
+ * resolve error gives) — then drop still-broken ids from `dsh.profile.bundles`
+ * (dependencies stay, so the plugin store still shows them for reinstall or
+ * removal), the same boot-prune idiom ensureDesktopBundles applies to retired
+ * @dsh-desktop/* bundles. A broken plugin thus degrades to a log line instead
+ * of taking down the whole desktop.
+ */
+async function healProfileBundles(anchor, { logLine }) {
+	const profileDir = resolveProfileDir('web', resolveDshHome());
+	let manifest;
+	try {
+		manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'));
+	} catch {
+		return; // no manifest yet: loadProfile's own init path handles that
+	}
+	const bundles = manifest.dsh?.profile?.bundles ?? [];
+	const broken = () => bundles
+		.map((id) => [id, bundleProblem(id, anchor, profileDir)])
+		.filter(([, problem]) => problem !== null);
+	let problems = broken();
+	if (problems.length === 0) return;
+	if (problems.some(([, problem]) => problem === 'not installed')) {
+		const unresolved = problems.filter(([, problem]) => problem === 'not installed').map(([id]) => id).join(', ');
+		logLine(`profile bundle(s) unresolved (${unresolved}); healing with pnpm install…`);
+		const res = await startPnpm(['install'], { cwd: profileDir, logLine }).done;
+		if (res.code !== 0) logLine(`profile heal install failed: ${(res.stderr || res.stdout || '').slice(-800)}`);
+		problems = broken();
+		if (problems.length === 0) return;
+	}
+	logLine(`dropping broken profile bundle(s) from the layer list (dependencies kept): ${problems.map(([id, problem]) => `${id} (${problem})`).join('; ')}`);
+	manifest.dsh.profile.bundles = bundles.filter((id) => !problems.some(([brokenId]) => brokenId === id));
+	writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+/**
  * Install the shipped desktop bundles into the profile with `dsh plugin add
  * <path>` (pnpm link + bundle registration) so their cordis.patch.yml layers
  * compose through dsh.profile.bundles like any other plugin. Idempotent: skips
@@ -174,6 +236,9 @@ export async function bootDesktop({ webServer, directoryPicker, desktopUi, overl
 		? overlayAnchor
 		: INSTALL_ANCHOR;
 	healProfilesModuleFallback(anchor);
+	// Heal a manifest that is ahead of its node_modules (interrupted pnpm,
+	// non-bundle listed as a bundle) before loadProfile fails loud on it.
+	await healProfileBundles(anchor, { logLine });
 	// First load initializes the profile manifest (and heals junctions); then
 	// the shipped desktop bundles are installed via `dsh plugin add`, and the
 	// profile is re-read so their cordis.patch.yml layers enter the composition.

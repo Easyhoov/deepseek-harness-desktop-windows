@@ -7,6 +7,8 @@
   "main": "src/main.mjs",
   "license": "MIT",
   "scripts": {
+    "postinstall": "node scripts/apply-official-patches.mjs",
+    "predist": "node scripts/apply-official-patches.mjs",
     "start": "electron .",
     "dist": "electron-builder --win",
     "dist:dir": "electron-builder --dir"
